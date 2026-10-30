@@ -147,7 +147,7 @@ class ErpService {
       final response = await request.close().timeout(const Duration(seconds: 30));
       final body = await response.transform(utf8.decoder).join();
       if ((response.statusCode == 401 || response.statusCode == 403) && !retried && await _relogin()) {
-        return _call(method, args, retried: true);
+        return await _call(method, args, retried: true);
       }
       if (response.statusCode != 200) {
         throw ErpException(_errorText(body) ?? 'ERP error (HTTP ${response.statusCode}).');
