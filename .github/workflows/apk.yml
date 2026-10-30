@@ -1,0 +1,93 @@
+name: Build HiperTracker APK
+
+# Every push to main builds a signed APK and publishes it as a GitHub release.
+# - The install link in the README always points at the newest one:
+#   https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk
+# - Installed apps see the new release and offer an in-app update (lib/update_service.dart).
+#
+# Needs these repository secrets (Settings -> Secrets and variables -> Actions), all from the
+# same signing key every time, or phones will refuse to update:
+#   HT_KEYSTORE_BASE64, HT_KEYSTORE_PASSWORD, HT_KEY_ALIAS, HT_KEY_PASSWORD
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-release
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.HT_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.HT_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.HT_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.HT_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Signing key missing. Add the HT_KEYSTORE_BASE64, HT_KEYSTORE_PASSWORD, HT_KEY_ALIAS and HT_KEY_PASSWORD repository secrets."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_WORKSPACE/environment"
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_WORKSPACE/environment/android.keystore"
+          cat > "$RUNNER_WORKSPACE/environment/key.properties" <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=../../../environment/android.keystore
+          EOF
+
+      - name: Version
+        id: version
+        run: |
+          # build numbers start above the original Traccar app's so Android always treats ours as newer
+          BUILD=$((1000 + ${{ github.run_number }}))
+          NAME=$(grep -E '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([^+]+).*/\1/')
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          {
+            echo "notes<<NOTES_EOF"
+            git log -1 --pretty=%B
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build APK
+        run: |
+          flutter pub get
+          flutter build apk --release \
+            --build-number=${{ steps.version.outputs.build }} \
+            --dart-define=BUILD_NUMBER=${{ steps.version.outputs.build }} \
+            --dart-define=UPDATE_REPO=${{ github.repository }}
+          cp build/app/outputs/flutter-apk/app-release.apk HiperTracker.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ steps.version.outputs.build }}
+          target_commitish: ${{ github.sha }}
+          name: HiperTracker ${{ steps.version.outputs.name }} (build ${{ steps.version.outputs.build }})
+          body: ${{ steps.version.outputs.notes }}
+          make_latest: true
+          files: HiperTracker.apk

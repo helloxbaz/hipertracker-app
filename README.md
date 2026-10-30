@@ -1,26 +1,48 @@
-# [Traccar Client app](https://www.traccar.org/client)
+<p align="center">
+  <img src="android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png" alt="HiperTracker" width="120">
+</p>
 
-[![Get it on Google Play](https://www.tananaev.com/badges/google-play.svg)](https://play.google.com/store/apps/details?id=org.traccar.client) [![Download on the App Store](https://www.tananaev.com/badges/app-store.svg)](https://itunes.apple.com/app/traccar-client/id843156974)
+<h1 align="center">HiperTracker</h1>
 
-## Overview
+<p align="center">GPS tracking app for Hipersign staff and vehicles. It sends the phone's location to the Hipersign Traccar server, so managers can see it live in <b>Hipersign ERP → HiperTracker</b>.</p>
 
-Traccar Client is a GPS tracking app for Android and iOS. It runs in the background and sends location updates to your own server running [Traccar](https://github.com/traccar/traccar), the open-source GPS tracking platform.
+## 📲 Install on an Android phone
 
-- **Real-time Tracking**: See your device’s location on your private server in real time.
-- **Open-Source**: 100% free and open-source, with no ads or tracking.
-- **Customizable**: Configure update intervals, accuracy, and data usage to fit your needs.
-- **Privacy First**: Your location data is sent only to your chosen server—never to third parties.
-- **Easy Integration**: Designed to work seamlessly with the Traccar server and many third-party GPS tracking platforms.
+<p align="center">
+  <a href="https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk">
+    <img src="https://img.shields.io/badge/Download-HiperTracker%20APK-0b5fff?style=for-the-badge&logo=android&logoColor=white" alt="Download HiperTracker APK" height="56">
+  </a>
+</p>
 
-Just enter your server address, grant location permissions, and the app will automatically send periodic location reports in the background.
+<p align="center">
+  Or scan with the phone's camera:<br><br>
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=https%3A%2F%2Fgithub.com%2Fhipersignerp-dev%2FHipersign-traccar-client%2Freleases%2Flatest%2Fdownload%2FHiperTracker.apk" alt="QR code to download HiperTracker" width="240">
+</p>
 
-Don't have a Traccar server yet? [Try the live demo](https://www.traccar.org/demo-server/) or see the [installation guides](https://www.traccar.org/install-vps/) to set up your own for free.
+**Direct link:** https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk
 
-| Client App |
-|---|
-| <img src=".github/screenshot.png" alt="Traccar Client app" width="200"> |
+1. Open the link (or tap the button) on the phone and download **HiperTracker.apk**.
+2. Open the downloaded file. If Android asks, allow your browser to **install unknown apps**, then tap **Install**.
+3. Open **HiperTracker**, allow **Location → Allow all the time** and **Notifications**.
+4. In Hipersign ERP, open the person's record in **HiperTracker → Devices & People** and scan the **Phone setup QR** with the app (⚙ Settings → QR icon). That sets the server and links this phone to that person.
 
-## Build
+> Android only. If the official Traccar Client from the Play Store is installed on the phone, uninstall it first.
+
+## 🔄 Updates
+
+Every change pushed to this repository builds a new version automatically and publishes it under [Releases](https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases).
+The app checks for new versions when it opens and shows **"New version available"** with an **Update** button that downloads and installs it.
+Workers can also check any time with the update icon at the top of the app.
+
+## What the app does
+
+- Sends location in the background to the Hipersign Traccar server (`gps.hipersignerp.cloud`)
+- **GPS-off alert:** if the worker turns location off, the phone shows an alert straight away and repeats it every 30 seconds; on the second alert the server raises a *GPS Antenna Cut* alarm so their head is notified
+- SOS button, one-off "send location now"
+- Settings protected by an optional password
+- Remote setup by QR code, link or MDM; remote commands by push (start/stop tracking, request position)
+
+## For developers
 
 Standard Flutter project:
 
@@ -29,10 +51,9 @@ flutter pub get
 flutter run
 ```
 
-## Team
-
-- Anton Tananaev ([anton@traccar.org](mailto:anton@traccar.org))
+Releases are built by `.github/workflows/apk.yml` on every push to `main`. It needs the repository secrets
+`HT_KEYSTORE_BASE64`, `HT_KEYSTORE_PASSWORD`, `HT_KEY_ALIAS` and `HT_KEY_PASSWORD`; every release must be signed with the same key or phones will refuse to update.
 
 ## License
 
-Apache License, Version 2.0. See [LICENSE.txt](https://github.com/traccar/traccar-client/blob/master/LICENSE.txt) for details.
+Based on [Traccar Client](https://github.com/traccar/traccar-client) by Anton Tananaev. Apache License, Version 2.0. See [LICENSE.txt](LICENSE.txt).

@@ -17,5 +17,19 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.traccar.client/updater")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "install" -> {
+                        val url = call.argument<String>("url")
+                        if (url.isNullOrBlank()) {
+                            result.success("error")
+                        } else {
+                            UpdateInstaller.install(this, url, call.argument<String>("name") ?: "HiperTracker.apk", result)
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 }

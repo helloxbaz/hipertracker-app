@@ -10,6 +10,7 @@ import 'package:traccar_client/preferences.dart';
 
 import 'geolocation_service.dart';
 import 'location_guard_service.dart';
+import 'update_service.dart';
 import 'l10n/app_localizations.dart';
 import 'settings_screen.dart';
 import 'status_screen.dart';
@@ -42,6 +43,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshState();
+      UpdateService.check(context);
     }
   }
 
@@ -242,7 +244,14 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Traccar Client'),
+        title: const Text('HiperTracker'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.system_update),
+            tooltip: 'Check for updates',
+            onPressed: () => UpdateService.check(context, force: true),
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
