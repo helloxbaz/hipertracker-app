@@ -16,7 +16,7 @@ jobs:
       - name: flutter analyze
         run: |
           set +e
-          flutter analyze --format=machine > analyze.txt 2>&1
+          dart analyze --format=machine --fatal-infos > analyze.txt 2>&1
           status=$?
           # show each issue as an annotation on the run page (visible without signing in)
           grep -E '^(INFO|WARNING|ERROR)\|' analyze.txt | while IFS='|' read -r sev type code file line col len msg; do
