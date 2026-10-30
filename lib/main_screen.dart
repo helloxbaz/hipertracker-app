@@ -82,8 +82,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             const SizedBox(height: 8),
             Text(
               isOff
-                  ? 'Location must stay on during work. Your company has been notified.'
-                  : 'Set Location to "Allow all the time" for this app. Your company has been notified.',
+                  ? 'Location must stay on during work. If it stays off, your manager is notified.'
+                  : 'Set Location to "Allow all the time" for this app. If it stays off, your manager is notified.',
               style: TextStyle(color: colors.onErrorContainer),
             ),
             const SizedBox(height: 8),
