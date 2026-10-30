@@ -1,0 +1,40 @@
+name: Update Translations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  translation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: transifex/cli-action@v2
+        with:
+          token: ${{ secrets.TRANSIFEX_TOKEN }}
+          args: pull -a --force
+      - name: Prepare translations
+        shell: python
+        run: |
+          import json
+          import subprocess
+          from pathlib import Path
+
+          arb_dir = Path("lib/l10n")
+          source = json.loads((arb_dir / "app_en.arb").read_text(encoding="utf-8"))
+
+          for path in arb_dir.glob("app_*.arb"):
+              if path.name == "app_en.arb":
+                  continue
+              translation = json.loads(path.read_text(encoding="utf-8"))
+              translation["@@locale"] = path.stem.removeprefix("app_")
+              path.write_text(json.dumps(translation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+              if any(not key.startswith("@") and value != source.get(key, value) for key, value in translation.items()):
+                  subprocess.run(["git", "add", "--", str(path)], check=True)
+      - name: Commit translations
+        run: |
+          git config --global user.name "Traccar Bot"
+          git config --global user.email "support@traccar.org"
+          git diff --cached --quiet || git commit -m "Update translations"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
