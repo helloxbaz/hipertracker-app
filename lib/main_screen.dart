@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:app_settings/app_settings.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:traccar_client/main.dart';
@@ -8,6 +9,7 @@ import 'package:traccar_client/password_service.dart';
 import 'package:traccar_client/preferences.dart';
 
 import 'geolocation_service.dart';
+import 'location_guard_service.dart';
 import 'l10n/app_localizations.dart';
 import 'settings_screen.dart';
 import 'status_screen.dart';
@@ -21,6 +23,7 @@ class MainScreen extends StatefulWidget {
 
 class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool trackingEnabled = false;
+  String locationState = LocationGuardService.on;
 
   @override
   void initState() {
@@ -44,13 +47,57 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _refreshState() async {
     final tracking = await GeolocationService.tracker.isTracking();
+    final location = await LocationGuardService.check();
     if (!mounted) return;
     setState(() {
       trackingEnabled = tracking;
+      locationState = location;
     });
   }
 
   void refresh() => setState(() {});
+
+  Widget _buildLocationWarningCard() {
+    final colors = Theme.of(context).colorScheme;
+    final isOff = locationState == LocationGuardService.off;
+    return Card(
+      color: colors.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.location_off, color: colors.onErrorContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isOff ? 'Location is turned off' : 'Location permission removed',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(color: colors.onErrorContainer),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isOff
+                  ? 'Location must stay on during work. Your company has been notified.'
+                  : 'Set Location to "Allow all the time" for this app. Your company has been notified.',
+              style: TextStyle(color: colors.onErrorContainer),
+            ),
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: () => AppSettings.openAppSettings(
+                type: isOff ? AppSettingsType.location : AppSettingsType.settings,
+              ),
+              child: Text(isOff ? 'Turn on location' : 'Open app settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildTrackingCard() {
     return Card(
@@ -201,6 +248,10 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            if (locationState != LocationGuardService.on) ...[
+              _buildLocationWarningCard(),
+              const SizedBox(height: 16),
+            ],
             _buildTrackingCard(),
             const SizedBox(height: 16),
             _buildSettingsCard(),
