@@ -13,6 +13,13 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.media.AudioAttributes
+import android.media.Ringtone
+import android.media.RingtoneManager
+import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -53,7 +60,8 @@ object LocationGuard {
     /** How often to re-check and re-alert while location stays off. */
     private const val REMINDER_SECONDS = 30L
 
-    private const val CHANNEL_ID = "location_alerts"
+    // new channel id: earlier builds made "location_alerts" with the phone's notification sound
+    private const val CHANNEL_ID = "location_alarm"
     private const val NOTIFICATION_ID = 7301
 
     private const val PREFS = "location_guard"
@@ -74,30 +82,58 @@ object LocationGuard {
 
     @Volatile
     private var registered = false
+    private var receiver: BroadcastReceiver? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var ringtone: Ringtone? = null
     private var reminderTask: ScheduledFuture<*>? = null
     private var retryTask: ScheduledFuture<*>? = null
     private var retryAttempt = 0
 
+    /**
+     * Starts watching. The watching itself lives in [LocationGuardService], a foreground service, so it
+     * keeps working after the app is closed; if Android won't let the service start right now (app started
+     * in the background), the receiver is registered on the app process instead until it can.
+     */
     fun start(context: Context) {
         val app = context.applicationContext
-        if (!registered) {
-            val filter = IntentFilter().apply {
-                addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
-                addAction(LocationManager.MODE_CHANGED_ACTION)
-            }
-            val receiver = object : BroadcastReceiver() {
-                override fun onReceive(c: Context, intent: Intent) {
-                    check(app)
-                }
-            }
-            if (Build.VERSION.SDK_INT >= 33) {
-                app.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                app.registerReceiver(receiver, filter)
-            }
-            registered = true
+        if (!LocationGuardService.start(app)) {
+            registerReceiver(app)
         }
         check(app)
+    }
+
+    @Synchronized
+    fun registerReceiver(context: Context) {
+        val app = context.applicationContext
+        if (registered) return
+        val filter = IntentFilter().apply {
+            addAction(LocationManager.PROVIDERS_CHANGED_ACTION)
+            addAction(LocationManager.MODE_CHANGED_ACTION)
+        }
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                check(app)
+            }
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            app.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            app.registerReceiver(r, filter)
+        }
+        receiver = r
+        registered = true
+    }
+
+    @Synchronized
+    fun unregisterReceiver(context: Context) {
+        val r = receiver ?: return
+        try {
+            context.applicationContext.unregisterReceiver(r)
+        } catch (e: IllegalArgumentException) {
+            // already gone
+        }
+        receiver = null
+        registered = false
     }
 
     fun currentState(context: Context): String = when {
@@ -151,6 +187,14 @@ object LocationGuard {
 
     private fun startReminders(app: Context) {
         if (reminderTask?.isDone == false) return
+        // keep the CPU awake while location is off so the 30-second alerts aren't delayed by sleep
+        if (wakeLock == null) {
+            val pm = app.getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "HiperTracker:LocationGuard").apply {
+                setReferenceCounted(false)
+                acquire(4 * 60 * 60 * 1000L)
+            }
+        }
         reminderTask = executor.scheduleWithFixedDelay(
             { remind(app) }, REMINDER_SECONDS, REMINDER_SECONDS, TimeUnit.SECONDS
         )
@@ -159,6 +203,58 @@ object LocationGuard {
     private fun stopReminders() {
         reminderTask?.cancel(false)
         reminderTask = null
+        stopSound()
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
+    }
+
+    // ---- Alarm sound + vibration (plays even when the phone is on silent) ----
+
+    private fun playAlarm(app: Context) {
+        try {
+            stopSound()
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val r = RingtoneManager.getRingtone(app, uri)
+            if (r != null) {
+                r.audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                r.play()
+                ringtone = r
+                // ring for ~6 seconds per alert, not forever
+                executor.schedule({ stopSound() }, 6, TimeUnit.SECONDS)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not play alarm sound", e)
+        }
+        try {
+            val pattern = longArrayOf(0, 700, 300, 700, 300, 700, 300, 700)
+            val vibrator = if (Build.VERSION.SDK_INT >= 31) {
+                (app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                app.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            if (Build.VERSION.SDK_INT >= 26) {
+                vibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(pattern, -1)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not vibrate", e)
+        }
+    }
+
+    private fun stopSound() {
+        try {
+            ringtone?.stop()
+        } catch (e: Exception) {
+            // ignore
+        }
+        ringtone = null
     }
 
     private fun remind(app: Context) {
@@ -345,10 +441,13 @@ object LocationGuard {
     private fun showNotification(app: Context, state: String, reminders: Int, alert: Boolean) {
         val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
+            // the alarm sound and vibration are played by playAlarm(), so the channel itself is silent
+            // (that also makes the alert loud even when notification sounds are muted)
             val channel = NotificationChannel(CHANNEL_ID, "Location alerts", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "Alerts when location is turned off during work"
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 600, 300, 600, 300, 600)
+                setSound(null, null)
+                enableVibration(false)
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             }
             nm.createNotificationChannel(channel)
         }
@@ -394,14 +493,17 @@ object LocationGuard {
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
             .setOnlyAlertOnce(!alert)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setContentIntent(pendingIntent)
+            .setFullScreenIntent(pendingIntent, true)
 
         try {
-            if (alert) nm.cancel(NOTIFICATION_ID) // re-posting fresh makes it sound and pop up again
+            if (alert) nm.cancel(NOTIFICATION_ID) // re-posting fresh makes it pop up again
             nm.notify(NOTIFICATION_ID, builder.build())
         } catch (e: SecurityException) {
             Log.w(TAG, "Notification permission missing", e)
         }
+        if (alert) playAlarm(app)
     }
 
     private fun cancelNotification(app: Context) {
