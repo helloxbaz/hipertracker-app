@@ -22,6 +22,19 @@ class Preferences {
   static const String preferPlatformProviders = 'prefer_platform_providers';
   static const String password = 'password';
 
+  // Hipersign ERP (check in / check out); the ERP password itself is kept in secure storage
+  static const String erpUrl = 'erp_url';
+  static const String erpUser = 'erp_user';
+  static const String erpSid = 'erp_sid';
+  static const String erpEmployee = 'erp_employee';
+  static const String erpEmployeeName = 'erp_employee_name';
+  static const String onDuty = 'on_duty';
+  static const String dutySince = 'duty_since';
+  static const String dutyMode = 'duty_mode';
+  static const String alarmInterval = 'alarm_interval';
+  static const String escalateAfter = 'escalate_after';
+  static const String requireLocation = 'require_location';
+
   static Future<void> init() async {
     _initFuture ??= _createInstance();
     await _initFuture;
@@ -35,6 +48,8 @@ class Preferences {
       cacheOptions: SharedPreferencesWithCacheOptions(
         allowList: {
           id, url, accuracy, distance, interval, angle, heartbeat, buffer, wakelock, stopDetection, preferPlatformProviders, password,
+          erpUrl, erpUser, erpSid, erpEmployee, erpEmployeeName, onDuty, dutySince, dutyMode, alarmInterval, escalateAfter,
+          requireLocation,
         },
       ),
     );

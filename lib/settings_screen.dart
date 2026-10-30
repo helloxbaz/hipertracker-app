@@ -6,6 +6,8 @@ import 'package:traccar_client/main.dart';
 import 'package:traccar_client/password_service.dart';
 import 'package:traccar_client/qr_code_screen.dart';
 
+import 'erp_login_screen.dart';
+import 'erp_service.dart';
 import 'geolocation_service.dart';
 import 'l10n/app_localizations.dart';
 import 'preferences.dart';
@@ -175,6 +177,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       body: ListView(
         children: [
+          ListTile(
+            leading: const Icon(Icons.badge),
+            title: const Text('Hipersign ERP account'),
+            subtitle: Text(ErpService.isConnected ? (ErpService.employeeName ?? ErpService.user ?? '') : 'Not connected'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              await Navigator.push(context, MaterialPageRoute(builder: (_) => const ErpLoginScreen()));
+              if (mounted) setState(() {});
+            },
+          ),
+          const Divider(height: 1),
           _buildListTile(AppLocalizations.of(context)!.idLabel, Preferences.id, false),
           _buildListTile(AppLocalizations.of(context)!.urlLabel, Preferences.url, false),
           _buildAccuracyListTile(),

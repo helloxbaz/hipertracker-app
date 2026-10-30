@@ -20,6 +20,17 @@ class MainActivity : FlutterActivity() {
                         LocationGuard.check(applicationContext)
                         result.success(LocationGuard.currentState(applicationContext))
                     }
+                    "setDuty" -> {
+                        LocationGuard.setDuty(
+                            applicationContext,
+                            call.argument<Boolean>("dutyMode") ?: false,
+                            call.argument<Boolean>("onDuty") ?: false,
+                            call.argument<Int>("alarmInterval") ?: 30,
+                            call.argument<Int>("escalateAfter") ?: 1,
+                        )
+                        result.success(LocationGuard.currentState(applicationContext))
+                    }
+                    "getLocation" -> CurrentLocation.get(applicationContext, result)
                     else -> result.notImplemented()
                 }
             }

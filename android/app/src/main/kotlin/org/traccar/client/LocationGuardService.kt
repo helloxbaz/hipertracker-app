@@ -75,6 +75,14 @@ class LocationGuardService : Service() {
         private const val CHANNEL_ID = "location_guard_service"
         private const val NOTIFICATION_ID = 7300
 
+        fun stop(context: Context) {
+            try {
+                context.stopService(Intent(context, LocationGuardService::class.java))
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not stop location protection service", e)
+            }
+        }
+
         /** Returns false if Android refused to start it (e.g. the app was started in the background). */
         fun start(context: Context): Boolean {
             return try {

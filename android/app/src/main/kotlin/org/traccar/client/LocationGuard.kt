@@ -57,8 +57,8 @@ object LocationGuard {
     /** Standard Traccar alarm type, so it can be picked in Traccar's notification settings. */
     private const val ALARM = "gpsAntennaCut"
 
-    /** How often to re-check and re-alert while location stays off. */
-    private const val REMINDER_SECONDS = 30L
+    /** Default re-alert interval while location stays off; ERP can change it (HiperTracker Settings). */
+    private const val DEFAULT_REMINDER_SECONDS = 30L
 
     // new channel id: earlier builds made "location_alerts" with the phone's notification sound
     private const val CHANNEL_ID = "location_alarm"
@@ -71,6 +71,12 @@ object LocationGuard {
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_ESCALATED = "escalated"
     private const val KEY_QUEUE = "queue"
+
+    // set from the app (ERP login / check-in), see setDuty()
+    private const val KEY_DUTY_MODE = "duty_mode"
+    private const val KEY_ON_DUTY = "on_duty"
+    private const val KEY_ALARM_INTERVAL = "alarm_interval"
+    private const val KEY_ESCALATE_AFTER = "escalate_after"
 
     // Flutter's shared_preferences (legacy Android backend) file and key prefix
     private const val FLUTTER_PREFS = "FlutterSharedPreferences"
@@ -96,11 +102,46 @@ object LocationGuard {
      */
     fun start(context: Context) {
         val app = context.applicationContext
+        if (!isActive(app)) {
+            // checked out: nothing to watch, and no "Location protection" notification
+            check(app)
+            LocationGuardService.stop(app)
+            unregisterReceiver(app)
+            return
+        }
         if (!LocationGuardService.start(app)) {
             registerReceiver(app)
         }
         check(app)
     }
+
+    /**
+     * Called by the app after ERP login and on every check-in / check-out.
+     * With [dutyMode] on, the GPS-off alarm only runs while the worker is checked in ([onDuty]).
+     */
+    fun setDuty(context: Context, dutyMode: Boolean, onDuty: Boolean, alarmInterval: Int, escalateAfter: Int) {
+        val app = context.applicationContext
+        prefs(app).edit()
+            .putBoolean(KEY_DUTY_MODE, dutyMode)
+            .putBoolean(KEY_ON_DUTY, onDuty)
+            .putInt(KEY_ALARM_INTERVAL, alarmInterval.coerceAtLeast(10))
+            .putInt(KEY_ESCALATE_AFTER, escalateAfter.coerceAtLeast(0))
+            .apply()
+        // a new interval only takes effect for the next off-episode's timer, so restart it
+        stopReminders()
+        start(app)
+    }
+
+    /** True when the GPS-off alarm should run: always, or (in duty mode) only while checked in. */
+    fun isActive(context: Context): Boolean {
+        val prefs = prefs(context.applicationContext)
+        return !prefs.getBoolean(KEY_DUTY_MODE, false) || prefs.getBoolean(KEY_ON_DUTY, false)
+    }
+
+    private fun reminderSeconds(app: Context): Long =
+        prefs(app).getInt(KEY_ALARM_INTERVAL, DEFAULT_REMINDER_SECONDS.toInt()).coerceAtLeast(10).toLong()
+
+    private fun escalateAfter(app: Context): Int = prefs(app).getInt(KEY_ESCALATE_AFTER, 1).coerceAtLeast(0)
 
     @Synchronized
     fun registerReceiver(context: Context) {
@@ -155,6 +196,15 @@ object LocationGuard {
         val last = prefs.getString(KEY_LAST_STATE, null)
         prefs.edit().putString(KEY_LAST_STATE, state).apply()
 
+        if (!isActive(app)) {
+            // checked out: no alarms, and forget any open episode
+            stopReminders()
+            cancelNotification(app)
+            prefs.edit().remove(KEY_OFF_SINCE).remove(KEY_REMINDERS).remove(KEY_ESCALATED).apply()
+            flushQueue(app)
+            return
+        }
+
         if (state == STATE_ON) {
             stopReminders()
             cancelNotification(app)
@@ -171,7 +221,9 @@ object LocationGuard {
                 if (last == STATE_ON || last == null || !prefs.contains(KEY_OFF_SINCE)) {
                     prefs.edit().putLong(KEY_OFF_SINCE, now).putInt(KEY_REMINDERS, 0).putBoolean(KEY_ESCALATED, false).apply()
                 }
-                enqueue(app, state, alarm = false, time = now)
+                val escalateNow = escalateAfter(app) == 0 && !prefs.getBoolean(KEY_ESCALATED, false)
+                if (escalateNow) prefs.edit().putBoolean(KEY_ESCALATED, true).apply()
+                enqueue(app, state, alarm = escalateNow, time = now)
                 showNotification(app, state, prefs.getInt(KEY_REMINDERS, 0), alert = true)
             } else {
                 // Still off (e.g. app restarted): keep the alert visible without re-sounding it
@@ -195,9 +247,8 @@ object LocationGuard {
                 acquire(4 * 60 * 60 * 1000L)
             }
         }
-        reminderTask = executor.scheduleWithFixedDelay(
-            { remind(app) }, REMINDER_SECONDS, REMINDER_SECONDS, TimeUnit.SECONDS
-        )
+        val every = reminderSeconds(app)
+        reminderTask = executor.scheduleWithFixedDelay({ remind(app) }, every, every, TimeUnit.SECONDS)
     }
 
     private fun stopReminders() {
@@ -261,8 +312,8 @@ object LocationGuard {
         try {
             synchronized(this) {
                 val state = currentState(app)
-                if (state == STATE_ON) {
-                    check(app) // clears the alert and reports "back on"
+                if (state == STATE_ON || !isActive(app)) {
+                    check(app) // clears the alert (and reports "back on")
                     return
                 }
                 val prefs = prefs(app)
@@ -270,8 +321,8 @@ object LocationGuard {
                 prefs.edit().putInt(KEY_REMINDERS, reminders).apply()
                 Log.i(TAG, "Location still off, reminder $reminders")
 
-                if (!prefs.getBoolean(KEY_ESCALATED, false)) {
-                    // 2nd trigger: tell the server, which notifies the worker's head
+                if (!prefs.getBoolean(KEY_ESCALATED, false) && reminders >= escalateAfter(app)) {
+                    // after the set number of repeat alarms: tell the server, which notifies the worker's head
                     prefs.edit().putBoolean(KEY_ESCALATED, true).apply()
                     enqueue(app, state, alarm = true, time = System.currentTimeMillis())
                 }
@@ -461,7 +512,13 @@ object LocationGuard {
         }
         val fix = if (isOff) "Tap to turn location back on" else "Tap and set Location to \"Allow all the time\""
         val text = if (reminders == 0) {
-            "Location must stay on during work. $fix within 30 seconds, or your manager will be notified."
+            if (escalateAfter(app) == 0) {
+                "Location must stay on during work. Your manager has been notified. $fix now."
+            } else {
+                "Location must stay on during work. $fix within ${reminderSeconds(app) * escalateAfter(app)} seconds, or your manager will be notified."
+            }
+        } else if (reminders < escalateAfter(app)) {
+            "$fix now, or your manager will be notified."
         } else {
             "Your manager has been notified. $fix now."
         }
