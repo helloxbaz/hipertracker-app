@@ -366,7 +366,8 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ListTile(
               contentPadding: EdgeInsets.zero,
               title: Text(AppLocalizations.of(context)!.urlLabel),
-              subtitle: Text(Preferences.instance.getString(Preferences.url) ?? ''),
+              // the device key in the address is not shown
+              subtitle: Text((Preferences.instance.getString(Preferences.url) ?? '').split('?').first),
             ),
             const SizedBox(height: 8),
             Wrap(

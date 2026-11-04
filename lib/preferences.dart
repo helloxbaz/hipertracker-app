@@ -62,7 +62,8 @@ class Preferences {
     }
     if (instance.getString(id) == null) {
       await instance.setString(id, (Random().nextInt(90000000) + 10000000).toString());
-      await instance.setString(url, 'http://gps.hipersignerp.cloud:5055');
+      // locations go straight to Hipersign ERP; logging in (or the setup QR) adds this phone's key
+      await instance.setString(url, 'https://nexus365.hipersignerp.cloud/api/method/hipertracker_position');
       await instance.setString(accuracy, 'medium');
       await instance.setInt(interval, 300);
       await instance.setInt(distance, 75);

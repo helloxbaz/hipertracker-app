@@ -24,7 +24,7 @@
 1. Open the link (or tap the button) on the phone and download **HiperTracker.apk**.
 2. Open the downloaded file. If Android asks, allow your browser to **install unknown apps**, then tap **Install**.
 3. Open **HiperTracker**, allow **Location → Allow all the time** and **Notifications**.
-4. In Hipersign ERP, open the person's record in **HiperTracker → Devices & People** and scan the **Phone setup QR** with the app (⚙ Settings → QR icon). That sets the server and links this phone to that person.
+4. Either log in with the worker's ERP username and password (⚙ Settings → **Hipersign ERP account**), or, in Hipersign ERP, open the device in **HiperTracker → Devices & People** and scan its **Phone setup QR** with the app (⚙ Settings → QR icon). Both link this phone to that person and give it its private device key.
 
 > Android only. If the official Traccar Client from the Play Store is installed on the phone, uninstall it first.
 
@@ -36,8 +36,10 @@ Workers can also check any time with the update icon at the top of the app.
 
 ## What the app does
 
-- Sends location in the background to the Hipersign Traccar server (`gps.hipersignerp.cloud`)
-- **GPS-off alert:** if the worker turns location off, the phone shows an alert straight away and repeats it every 30 seconds; on the second alert the server raises a *GPS Antenna Cut* alarm so their head is notified
+- Sends location in the background **straight to Hipersign ERP** (`/api/method/hipertracker_position`), no Traccar server needed. Each phone sends its private device key, so nobody else can post locations for it
+- **Check In / Check Out** with location, saved in ERP as Employee Checkin; tracking and the GPS alarm run only between the two (set in HiperTracker Settings)
+- **GPS-off alert:** if the worker turns location off, the phone rings an alarm (even with the app closed) and repeats it at the interval set in ERP; when it escalates, ERP notifies their head (bell notification + email)
+- ERP also alerts the head when a checked-in phone stops reporting (switched off, no internet), and keeps a day-by-day **route history** for every phone
 - SOS button, one-off "send location now"
 - Settings protected by an optional password
 - Remote setup by QR code, link or MDM; remote commands by push (start/stop tracking, request position)

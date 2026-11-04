@@ -3,9 +3,14 @@ import 'preferences.dart';
 
 class ConfigurationService {
   static Future<void> applyUri(Uri uri) async {
-    final url = (uri.scheme == 'http' || uri.scheme == 'https')
+    var url = (uri.scheme == 'http' || uri.scheme == 'https')
         ? '${uri.origin}${uri.path}'
         : uri.queryParameters['url'];
+    // HiperTracker ERP setup QR: the device key stays in the address the phone reports to
+    final key = uri.queryParameters['key'];
+    if (url != null && key != null && key.isNotEmpty) {
+      url = '$url?key=${Uri.encodeQueryComponent(key)}';
+    }
     await applyParameters(uri.queryParameters, url: url);
   }
 
