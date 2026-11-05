@@ -20,7 +20,7 @@ class ConfigurationService {
 
   static Future<void> applyParameters(Map<String, dynamic> parameters, {String? url}) async {
     if (url != null) {
-      await Preferences.instance.setString(Preferences.url, url);
+      await Preferences.instance.setString(Preferences.url, Preferences.normalizeServerUrl(url));
     }
     await _applyStringParameter(parameters, Preferences.id);
     await _applyStringParameter(parameters, Preferences.accuracy);

@@ -60,16 +60,45 @@ class Preferences {
         }
       }
     }
+    // a short server address (just the ERP site) is stored as the full location address
+    final storedUrl = instance.getString(url);
+    if (storedUrl != null && storedUrl.isNotEmpty && normalizeServerUrl(storedUrl) != storedUrl) {
+      await instance.setString(url, normalizeServerUrl(storedUrl));
+    }
     if (instance.getString(id) == null) {
       await instance.setString(id, (Random().nextInt(90000000) + 10000000).toString());
-      // locations go straight to Hipersign ERP; logging in (or the setup QR) adds this phone's key
-      await instance.setString(url, 'https://nexus365.hipersignerp.cloud/api/method/hipertracker_position');
+      // locations go straight to Hipersign ERP, which knows the phone by its ID (like Traccar)
+      await instance.setString(url, normalizeServerUrl('https://nexus365.hipersignerp.cloud'));
       await instance.setString(accuracy, 'medium');
       await instance.setInt(interval, 300);
       await instance.setInt(distance, 75);
       await instance.setBool(buffer, true);
       await instance.setBool(stopDetection, true);
     }
+  }
+
+  static const String erpLocationPath = '/api/method/hipertracker_position';
+
+  /// Lets people type just the ERP site, e.g. `nexus365.hipersignerp.cloud`: the phone then reports to
+  /// that ERP's HiperTracker location address. Full addresses and Traccar-style `host:5055` stay as they are.
+  static String normalizeServerUrl(String value) {
+    var v = value.trim();
+    if (v.isEmpty) return v;
+    if (!v.contains('://')) v = 'https://$v';
+    final uri = Uri.tryParse(v);
+    if (uri == null || uri.host.isEmpty) return v;
+    if ((uri.path.isEmpty || uri.path == '/') && !uri.hasPort) {
+      return uri.replace(path: erpLocationPath).toString();
+    }
+    return v;
+  }
+
+  /// The server address as people typed it: the ERP site without the location path or device key.
+  static String displayServerUrl(String? value) {
+    final v = value ?? '';
+    final uri = Uri.tryParse(v);
+    if (uri != null && uri.host.isNotEmpty && uri.path == erpLocationPath) return uri.origin;
+    return v.split('?').first;
   }
 
   static Config buildConfig() {

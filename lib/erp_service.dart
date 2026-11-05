@@ -189,7 +189,7 @@ class ErpService {
     final identifier = '${config['identifier'] ?? ''}';
     if (identifier.isNotEmpty) await p.setString(Preferences.id, identifier);
     final reportUrl = '${config['report_url'] ?? ''}';
-    if (reportUrl.isNotEmpty) await p.setString(Preferences.url, reportUrl);
+    if (reportUrl.isNotEmpty) await p.setString(Preferences.url, Preferences.normalizeServerUrl(reportUrl));
     await p.setString(Preferences.accuracy, 'high');
     await p.setInt(Preferences.interval, _int(config['interval'], 60));
     await p.setInt(Preferences.distance, _int(config['distance'], 50));

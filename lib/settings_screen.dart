@@ -34,7 +34,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _editSetting(String title, String key, bool isInt) async {
     final initialValue = isInt
         ? Preferences.instance.getInt(key)?.toString() ?? '0'
-        : Preferences.instance.getString(key) ?? '';
+        : key == Preferences.url
+            ? Preferences.displayServerUrl(Preferences.instance.getString(key))
+            : Preferences.instance.getString(key) ?? '';
 
     final controller = TextEditingController(text: initialValue);
     final errorMessage = AppLocalizations.of(context)!.invalidValue;
@@ -63,8 +65,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
 
     if (result != null && result.isNotEmpty) {
+      var result2 = result;
       if (key == Preferences.url) {
-        final uri = Uri.tryParse(result);
+        // people can type just the ERP site, e.g. nexus365.hipersignerp.cloud
+        result2 = Preferences.normalizeServerUrl(result);
+        final uri = Uri.tryParse(result2);
         if (uri == null || uri.host.isEmpty || !(uri.scheme == 'http' || uri.scheme == 'https')) {
           messengerKey.currentState?.showSnackBar(SnackBar(content: Text(errorMessage)));
           return;
@@ -79,7 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           await Preferences.instance.setInt(key, intValue);
         }
       } else {
-        await Preferences.instance.setString(key, result);
+        await Preferences.instance.setString(key, result2);
       }
       await GeolocationService.tracker.setConfig(Preferences.buildConfig());
       setState(() {});
@@ -125,6 +130,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     } else {
       value = Preferences.instance.getString(key);
+      if (key == Preferences.url) value = Preferences.displayServerUrl(value);
     }
     return ListTile(
       title: Text(title),
