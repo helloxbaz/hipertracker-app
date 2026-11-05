@@ -35,10 +35,12 @@ class _MyDayScreenState extends State<MyDayScreen> {
     setState(() => _loading = true);
     try {
       final day = await ErpService.myDay();
-      if (mounted) setState(() {
-        _day = day;
-        _error = null;
-      });
+      if (mounted) {
+        setState(() {
+          _day = day;
+          _error = null;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
