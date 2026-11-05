@@ -34,6 +34,8 @@ class Preferences {
   static const String alarmInterval = 'alarm_interval';
   static const String escalateAfter = 'escalate_after';
   static const String requireLocation = 'require_location';
+  // set when the phone is used without an ERP account (server address + ID only, like Traccar)
+  static const String trackingOnly = 'tracking_only';
 
   static Future<void> init() async {
     _initFuture ??= _createInstance();
@@ -49,7 +51,7 @@ class Preferences {
         allowList: {
           id, url, accuracy, distance, interval, angle, heartbeat, buffer, wakelock, stopDetection, preferPlatformProviders, password,
           erpUrl, erpUser, erpSid, erpEmployee, erpEmployeeName, onDuty, dutySince, dutyMode, alarmInterval, escalateAfter,
-          requireLocation,
+          requireLocation, trackingOnly,
         },
       ),
     );

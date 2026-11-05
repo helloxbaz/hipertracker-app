@@ -11,12 +11,16 @@ import 'package:traccar_client/push_service.dart';
 import 'package:traccar_client/quick_actions.dart';
 import 'package:traccar_client/update_service.dart';
 
+import 'app_theme.dart';
 import 'configuration_service.dart';
+import 'erp_service.dart';
 import 'geolocation_service.dart';
+import 'home_shell.dart';
 import 'l10n/app_localizations.dart';
 import 'main_screen.dart';
 import 'managed_config_service.dart';
 import 'preferences.dart';
+import 'sign_in_screen.dart';
 
 final messengerKey = GlobalKey<ScaffoldMessengerState>();
 final navigatorKey = GlobalKey<NavigatorState>();
@@ -101,6 +105,9 @@ class _MainAppState extends State<MainApp> {
     );
     if (confirmed == true) {
       await ConfigurationService.applyUri(uri);
+      // a setup link makes the phone a tracker even before anyone signs in
+      if (!ErpService.isConnected) await Preferences.instance.setBool(Preferences.trackingOnly, true);
+      ErpService.changes.value++;
       mainScreenKey.currentState?.refresh();
     }
   }
@@ -112,24 +119,58 @@ class _MainAppState extends State<MainApp> {
       navigatorKey: navigatorKey,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.green,
-          brightness: Brightness.light,
-        ),
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.green,
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: Stack(
+      title: 'HiperTracker',
+      // same light Hipersign theme as the Hipersign mobile app
+      theme: buildTheme(),
+      home: const Stack(
         children: [
-          const QuickActionsInitializer(),
-          MainScreen(key: mainScreenKey),
+          QuickActionsInitializer(),
+          _Root(),
         ],
       ),
     );
+  }
+}
+
+/// Signed in to the ERP (or set up for tracking only): the app. Otherwise: the sign-in screen.
+class _Root extends StatefulWidget {
+  const _Root();
+
+  @override
+  State<_Root> createState() => _RootState();
+}
+
+class _RootState extends State<_Root> {
+  @override
+  void initState() {
+    super.initState();
+    ErpService.changes.addListener(_changed);
+    _keepTrackingOnlyPhones();
+  }
+
+  @override
+  void dispose() {
+    ErpService.changes.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  /// Phones that were already tracking without an ERP login before this version stay that way.
+  Future<void> _keepTrackingOnlyPhones() async {
+    final p = Preferences.instance;
+    if (ErpService.isConnected || p.getBool(Preferences.trackingOnly) != null) return;
+    if (await GeolocationService.tracker.isTracking()) {
+      await p.setBool(Preferences.trackingOnly, true);
+      _changed();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final inApp = ErpService.isConnected || (Preferences.instance.getBool(Preferences.trackingOnly) ?? false);
+    return inApp ? const HomeShell() : const SignInScreen();
   }
 }

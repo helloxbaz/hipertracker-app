@@ -211,6 +211,13 @@ class ErpService {
     changes.value++;
   }
 
+  /// The worker's check ins / outs for the last [days] days and today's travel, for the My Day tab.
+  static Future<MyDay> myDay({int days = 14}) async {
+    final data = await _call('hipertracker_my_day', {'days': '$days'}) as Map<String, dynamic>?;
+    if (data == null) throw const ErpException('The ERP did not send your day.');
+    return MyDay.fromJson(data);
+  }
+
   /// Check In (IN) or Check Out (OUT) with the phone's current location.
   static Future<String> checkInOut(bool checkIn) async {
     Map<String, dynamic>? fix;
@@ -320,4 +327,44 @@ class ErpException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class AttendanceLog {
+  final bool isIn;
+  final DateTime time;
+  final double? lat;
+  final double? lon;
+  const AttendanceLog(this.isIn, this.time, this.lat, this.lon);
+}
+
+class MyDay {
+  final List<AttendanceLog> logs; // newest first
+  final double distanceKm;
+  final int points;
+  final int gpsOff;
+  final DateTime? first;
+  final DateTime? last;
+  const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last);
+
+  static DateTime? _time(dynamic v) => v == null ? null : DateTime.tryParse('$v'.replaceFirst(' ', 'T'));
+  static double? _num(dynamic v) => v == null ? null : double.tryParse('$v');
+
+  factory MyDay.fromJson(Map<String, dynamic> j) {
+    final logs = <AttendanceLog>[];
+    for (final l in (j['logs'] as List? ?? const [])) {
+      final m = l as Map<String, dynamic>;
+      final t = _time(m['time']);
+      if (t == null) continue;
+      logs.add(AttendanceLog(m['log_type'] == 'IN', t, _num(m['lat']), _num(m['lon'])));
+    }
+    final today = (j['today'] as Map<String, dynamic>?) ?? const {};
+    return MyDay(
+      logs,
+      _num(today['distance_km']) ?? 0,
+      int.tryParse('${today['points'] ?? 0}') ?? 0,
+      int.tryParse('${today['gps_off'] ?? 0}') ?? 0,
+      _time(today['first']),
+      _time(today['last']),
+    );
+  }
 }
