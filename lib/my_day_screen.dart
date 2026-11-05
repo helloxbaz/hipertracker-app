@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
@@ -105,6 +106,74 @@ class _MyDayScreenState extends State<MyDayScreen> {
         ],
       ]),
     );
+  }
+
+  static const _stopColors = {
+    'Pending': HsColors.textSecondary,
+    'Reached': Color(0xFFF59E0B),
+    'Left': HsColors.onDuty,
+    'Skipped': Color(0xFF9CA3AF),
+  };
+
+  Future<void> _navigate(PlanStop s) async {
+    final uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}');
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open maps')));
+    }
+  }
+
+  /// A trip plan from the office: the stops in order; reached / left is marked by the ERP from the phone's location.
+  Widget _plan(TripPlan plan) {
+    final next = plan.next;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+        child: Row(children: [
+          Expanded(
+            child: Text(plan.title,
+                style: const TextStyle(fontWeight: FontWeight.w700, color: HsColors.navy), overflow: TextOverflow.ellipsis),
+          ),
+          Text('${plan.done} of ${plan.stops.length} done', style: const TextStyle(color: HsColors.textSecondary)),
+        ]),
+      ),
+      HsPanel(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(children: [
+          for (var i = 0; i < plan.stops.length; i++) ...[
+            if (i > 0) const Divider(indent: 56),
+            Builder(builder: (context) {
+              final s = plan.stops[i];
+              final isNext = identical(s, next);
+              final parts = <String>[
+                if (s.arrived != null) 'Reached ${s.arrived}' else if (s.planned != null) 'Planned ${s.planned}',
+                if (s.left != null) 'left ${s.left}',
+                if (s.task != null && s.task!.trim().isNotEmpty) s.task!.trim(),
+              ];
+              return ListTile(
+                tileColor: isNext ? HsColors.cardHigh : null,
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: _stopColors[s.status] ?? HsColors.textSecondary,
+                  child: s.status == 'Left'
+                      ? const Icon(Icons.check, size: 18, color: Colors.white)
+                      : Text('${i + 1}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                ),
+                title: Text(isNext ? 'Next: ${s.name}' : s.name,
+                    style: TextStyle(fontWeight: isNext ? FontWeight.w700 : FontWeight.w500)),
+                subtitle: parts.isEmpty ? null : Text(parts.join(' · ')),
+                trailing: s.status == 'Pending' && s.lat != null && s.lon != null
+                    ? IconButton(
+                        tooltip: 'Navigate',
+                        icon: const Icon(Icons.navigation, color: HsColors.blue),
+                        onPressed: () => _navigate(s),
+                      )
+                    : Text(s.status == 'Left' ? 'Done' : s.status, style: const TextStyle(fontWeight: FontWeight.w600)),
+              );
+            }),
+          ],
+        ]),
+      ),
+    ]);
   }
 
   /// Today's trips (blue) and stops (purple), in time order.
@@ -217,6 +286,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
                   const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator())),
                 if (day != null) ...[
                   _todayCard(day),
+                  for (final plan in day.plans) _plan(plan),
                   if (day.segments.isNotEmpty) _segments(day),
                   if (day.logs.isEmpty)
                     const Padding(

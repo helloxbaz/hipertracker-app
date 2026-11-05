@@ -350,7 +350,40 @@ class DaySegment {
   const DaySegment(this.isTrip, this.start, this.end, this.minutes, this.distanceKm, this.avgSpeed, this.maxSpeed, this.ongoing);
 }
 
+/// One stop of a trip plan set in the ERP, with how far the worker has got.
+class PlanStop {
+  final int idx;
+  final String name;
+  final String? task;
+  final double? lat;
+  final double? lon;
+  final String? planned; // HH:MM
+  final String status; // Pending / Reached / Left / Skipped
+  final String? arrived;
+  final String? left;
+  const PlanStop(this.idx, this.name, this.task, this.lat, this.lon, this.planned, this.status, this.arrived, this.left);
+}
+
+/// A trip plan for today: the stops to visit, in order.
+class TripPlan {
+  final String name;
+  final String title;
+  final String status;
+  final List<PlanStop> stops;
+  const TripPlan(this.name, this.title, this.status, this.stops);
+
+  PlanStop? get next {
+    for (final s in stops) {
+      if (s.status == 'Pending') return s;
+    }
+    return null;
+  }
+
+  int get done => stops.where((s) => s.status != 'Pending').length;
+}
+
 class MyDay {
+  final List<TripPlan> plans; // today's trip plans
   final List<DaySegment> segments; // today's trips and stops, in time order
   final List<AttendanceLog> logs; // newest first
   final double distanceKm;
@@ -358,7 +391,8 @@ class MyDay {
   final int gpsOff;
   final DateTime? first;
   final DateTime? last;
-  const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last, this.segments);
+  const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last, this.segments,
+      [this.plans = const []]);
 
   static DateTime? _time(dynamic v) => v == null ? null : DateTime.tryParse('$v'.replaceFirst(' ', 'T'));
   static double? _num(dynamic v) => v == null ? null : double.tryParse('$v');
@@ -380,6 +414,15 @@ class MyDay {
       for (final st in (today['stops'] as List? ?? const []))
         DaySegment(false, '${st['start']}', '${st['end']}', i(st['minutes']), 0, 0, 0, st['ongoing'] == true),
     ]..sort((a, b) => a.start.compareTo(b.start));
+    String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
+    final plans = <TripPlan>[
+      for (final p in (j['plans'] as List? ?? const []))
+        TripPlan('${p['name']}', '${p['title'] ?? p['name']}', '${p['status'] ?? ''}', [
+          for (final st in (p['stops'] as List? ?? const []))
+            PlanStop(i(st['idx']), '${st['name'] ?? 'Stop ${st['idx']}'}', str(st['task']), _num(st['lat']),
+                _num(st['lon']), str(st['planned']), '${st['status'] ?? 'Pending'}', str(st['arrived']), str(st['left'])),
+        ]),
+    ];
     return MyDay(
       logs,
       _num(today['distance_km']) ?? 0,
@@ -388,6 +431,7 @@ class MyDay {
       _time(today['first']),
       _time(today['last']),
       segments,
+      plans,
     );
   }
 }
