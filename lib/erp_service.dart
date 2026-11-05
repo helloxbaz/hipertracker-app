@@ -337,14 +337,28 @@ class AttendanceLog {
   const AttendanceLog(this.isIn, this.time, this.lat, this.lon);
 }
 
+/// One trip (movement between stops) or one stop of today, from the ERP.
+class DaySegment {
+  final bool isTrip;
+  final String start; // HH:MM
+  final String end;
+  final int minutes;
+  final double distanceKm;
+  final int avgSpeed;
+  final int maxSpeed;
+  final bool ongoing;
+  const DaySegment(this.isTrip, this.start, this.end, this.minutes, this.distanceKm, this.avgSpeed, this.maxSpeed, this.ongoing);
+}
+
 class MyDay {
+  final List<DaySegment> segments; // today's trips and stops, in time order
   final List<AttendanceLog> logs; // newest first
   final double distanceKm;
   final int points;
   final int gpsOff;
   final DateTime? first;
   final DateTime? last;
-  const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last);
+  const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last, this.segments);
 
   static DateTime? _time(dynamic v) => v == null ? null : DateTime.tryParse('$v'.replaceFirst(' ', 'T'));
   static double? _num(dynamic v) => v == null ? null : double.tryParse('$v');
@@ -358,6 +372,14 @@ class MyDay {
       logs.add(AttendanceLog(m['log_type'] == 'IN', t, _num(m['lat']), _num(m['lon'])));
     }
     final today = (j['today'] as Map<String, dynamic>?) ?? const {};
+    int i(dynamic v) => (_num(v) ?? 0).round();
+    final segments = <DaySegment>[
+      for (final t in (today['trips'] as List? ?? const []))
+        DaySegment(true, '${t['start']}', '${t['end']}', i(t['minutes']), _num(t['distance_km']) ?? 0,
+            i(t['avg_speed']), i(t['max_speed']), false),
+      for (final st in (today['stops'] as List? ?? const []))
+        DaySegment(false, '${st['start']}', '${st['end']}', i(st['minutes']), 0, 0, 0, st['ongoing'] == true),
+    ]..sort((a, b) => a.start.compareTo(b.start));
     return MyDay(
       logs,
       _num(today['distance_km']) ?? 0,
@@ -365,6 +387,7 @@ class MyDay {
       int.tryParse('${today['gps_off'] ?? 0}') ?? 0,
       _time(today['first']),
       _time(today['last']),
+      segments,
     );
   }
 }

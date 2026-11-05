@@ -107,6 +107,48 @@ class _MyDayScreenState extends State<MyDayScreen> {
     );
   }
 
+  /// Today's trips (blue) and stops (purple), in time order.
+  Widget _segments(MyDay day) {
+    const purple = Color(0xFF7C3AED);
+    final trips = day.segments.where((x) => x.isTrip).length;
+    final stops = day.segments.length - trips;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
+        child: Text('Today: $trips trip${trips == 1 ? '' : 's'}, $stops stop${stops == 1 ? '' : 's'}',
+            style: const TextStyle(fontWeight: FontWeight.w700, color: HsColors.navy)),
+      ),
+      HsPanel(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Column(children: [
+          for (var i = 0; i < day.segments.length; i++) ...[
+            if (i > 0) const Divider(indent: 56),
+            Builder(builder: (context) {
+              final x = day.segments[i];
+              return ListTile(
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: x.isTrip ? HsColors.blue : purple,
+                  child: x.isTrip
+                      ? const Icon(Icons.directions_car, size: 18, color: Colors.white)
+                      : const Text('P', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                ),
+                title: Text(x.isTrip
+                    ? '${x.distanceKm.toStringAsFixed(1)} km trip'
+                    : (x.ongoing ? 'Stopped now' : 'Stopped')),
+                subtitle: Text(x.isTrip
+                    ? '${_hours(Duration(minutes: x.minutes))} · avg ${x.avgSpeed} km/h · max ${x.maxSpeed} km/h'
+                    : _hours(Duration(minutes: x.minutes))),
+                trailing: Text('${x.start}–${x.ongoing ? 'now' : x.end}',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+              );
+            }),
+          ],
+        ]),
+      ),
+    ]);
+  }
+
   List<Widget> _history(MyDay day) {
     // newest day first; inside a day, oldest log first
     final byDay = <DateTime, List<AttendanceLog>>{};
@@ -175,6 +217,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
                   const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator())),
                 if (day != null) ...[
                   _todayCard(day),
+                  if (day.segments.isNotEmpty) _segments(day),
                   if (day.logs.isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(32),
