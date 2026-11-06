@@ -4,13 +4,23 @@ import 'preferences.dart';
 
 /// Spoken directions for the trip screen (the phone's own text-to-speech; works offline once the voice is installed).
 class VoiceGuide {
-  static const _prefKey = 'trip_voice';
   final FlutterTts _tts = FlutterTts();
   bool _ready = false;
 
-  bool get enabled => Preferences.instance.getBool(_prefKey) ?? true;
+  bool _on = true;
+
+  bool get enabled {
+    try {
+      _on = Preferences.instance.getBool(Preferences.tripVoice) ?? _on;
+    } catch (_) {}
+    return _on;
+  }
+
   set enabled(bool v) {
-    Preferences.instance.setBool(_prefKey, v);
+    _on = v;
+    try {
+      Preferences.instance.setBool(Preferences.tripVoice, v);
+    } catch (_) {}
     if (!v) _tts.stop();
   }
 

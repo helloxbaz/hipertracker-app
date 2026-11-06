@@ -34,6 +34,19 @@ void main() async {
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
     return true;
   };
+  // a screen that fails shows what went wrong (instead of a plain grey screen), so it can be reported
+  ErrorWidget.builder = (details) => Material(
+        color: const Color(0xFFFDECEC),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Text(
+              'Something went wrong on this screen. Please send a screenshot to your admin.\n\n${details.exceptionAsString()}',
+              style: const TextStyle(color: Color(0xFFC62828), fontSize: 14),
+            ),
+          ),
+        ),
+      );
   await Preferences.init();
   await GeolocationService.tracker.init(Preferences.buildConfig());
   await PasswordService.migrate();
