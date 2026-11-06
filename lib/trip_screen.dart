@@ -26,7 +26,7 @@ class TripScreen extends StatefulWidget {
   State<TripScreen> createState() => _TripScreenState();
 }
 
-class _TripScreenState extends State<TripScreen> {
+class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateMixin {
   static const _reachedWithin = 120.0; // metres: the ERP uses 150, the app says "Reached" a little before
   static const _offRoute = 80.0; // metres from the route before it is worked out again
 
@@ -58,6 +58,23 @@ class _TripScreenState extends State<TripScreen> {
   Timer? _poll;
 
   final _voice = VoiceGuide();
+
+  // Google-Maps-like motion: the arrow glides between GPS fixes, the map turns so the way ahead is up,
+  // zooms out as speed rises, and keeps the arrow in the lower part of the screen.
+  late final AnimationController _glide =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 950))..addListener(_onGlide);
+  LatLng? _shown; // where the arrow is drawn right now
+  LatLng? _glideFrom;
+  LatLng? _glideTo;
+  double _heading = 0; // degrees, 0 = north
+  double _headingFrom = 0;
+  double _headingTo = 0;
+  bool _moving = false;
+  DateTime _lastMoving = DateTime.fromMillisecondsSinceEpoch(0);
+  LatLng? _lastFix;
+  bool _headingUp = true; // map turns with the direction of travel (compass button switches to north up)
+  double _zoom = 17;
+  double _screenH = 700;
   int _spokenStep = -1; // step index the last announcement was about
   int _spokenStage = 0; // 1 = far ahead, 2 = coming up, 3 = now
   bool _greeted = false;
@@ -80,6 +97,7 @@ class _TripScreenState extends State<TripScreen> {
     _poll?.cancel();
     _bannerTimer?.cancel();
     _voice.stop();
+    _glide.dispose();
     WakelockPlus.disable().catchError((_) {});
     super.dispose();
   }
@@ -177,10 +195,67 @@ class _TripScreenState extends State<TripScreen> {
     if (first || _route == null) _reroute();
     _speakDirections();
 
-    if (_follow && _mapReady) {
-      _map.move(LatLng(p.latitude, p.longitude), math.max(_map.camera.zoom, 15.5));
-    }
+    _startGlide(p);
     setState(() {});
+  }
+
+  /// Moving or stopped, which way we're heading, and glide the arrow to the new fix.
+  void _startGlide(Position p) {
+    final here = LatLng(p.latitude, p.longitude);
+    final speed = p.speed.isFinite ? p.speed : 0.0; // m/s
+    if (speed > 1.4) _lastMoving = DateTime.now();
+    _moving = DateTime.now().difference(_lastMoving).inSeconds < 4;
+
+    var heading = _headingTo;
+    if (speed > 1.4 && p.heading.isFinite && p.heading >= 0) {
+      heading = p.heading;
+    } else if (_lastFix != null &&
+        Geolocator.distanceBetween(_lastFix!.latitude, _lastFix!.longitude, here.latitude, here.longitude) > 8) {
+      heading = Geolocator.bearingBetween(_lastFix!.latitude, _lastFix!.longitude, here.latitude, here.longitude);
+    }
+    if (_lastFix == null ||
+        Geolocator.distanceBetween(_lastFix!.latitude, _lastFix!.longitude, here.latitude, here.longitude) > 8) {
+      _lastFix = here;
+    }
+    heading = (heading % 360 + 360) % 360;
+
+    // zoom by speed, like a car navigator
+    final kmh = speed * 3.6;
+    final targetZoom = !_moving ? 17.2 : kmh < 15 ? 17.5 : kmh < 35 ? 16.8 : kmh < 60 ? 16.1 : 15.4;
+    _zoom = _zoom + (targetZoom - _zoom) * 0.35;
+
+    _glideFrom = _shown ?? here;
+    _glideTo = here;
+    _headingFrom = _heading;
+    // turn the short way round
+    var delta = heading - _headingFrom;
+    if (delta > 180) delta -= 360;
+    if (delta < -180) delta += 360;
+    _headingTo = _headingFrom + delta;
+    _glide.forward(from: 0);
+  }
+
+  void _onGlide() {
+    final a = _glideFrom, b = _glideTo;
+    if (a == null || b == null) return;
+    final t = Curves.easeInOut.transform(_glide.value);
+    _shown = LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
+    _heading = _headingFrom + (_headingTo - _headingFrom) * t;
+    if (_follow && _mapReady) {
+      final rotation = _headingUp ? (_moving ? -_heading : _map.camera.rotation) : 0.0;
+      _map.rotate(rotation);
+      _map.move(_shown!, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+    }
+    if (mounted) setState(() {});
+  }
+
+  void _recenter() {
+    setState(() => _follow = true);
+    final at = _shown ?? (_pos != null ? LatLng(_pos!.latitude, _pos!.longitude) : null);
+    if (at != null && _mapReady) {
+      _map.rotate(_headingUp && _moving ? -_heading : (_headingUp ? _map.camera.rotation : 0));
+      _map.move(at, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+    }
   }
 
   Future<void> _reroute() async {
@@ -389,6 +464,7 @@ class _TripScreenState extends State<TripScreen> {
 
   @override
   Widget build(BuildContext context) {
+    _screenH = MediaQuery.of(context).size.height;
     final plan = _plan;
     return Scaffold(
       body: plan == null
@@ -405,6 +481,22 @@ class _TripScreenState extends State<TripScreen> {
                 right: 14,
                 bottom: 250,
                 child: Column(children: [
+                  FloatingActionButton.small(
+                    heroTag: 'compass',
+                    backgroundColor: Colors.white,
+                    foregroundColor: HsColors.navy,
+                    tooltip: _headingUp ? 'North up' : 'Direction of travel up',
+                    onPressed: () {
+                      setState(() => _headingUp = !_headingUp);
+                      if (!_headingUp && _mapReady) _map.rotate(0);
+                      _recenter();
+                    },
+                    child: Transform.rotate(
+                      angle: (_mapReady ? _map.camera.rotation : 0) * math.pi / 180,
+                      child: Icon(_headingUp ? Icons.explore : Icons.navigation_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   FloatingActionButton.small(
                     heroTag: 'voice',
                     backgroundColor: Colors.white,
@@ -443,11 +535,8 @@ class _TripScreenState extends State<TripScreen> {
                     backgroundColor: _follow ? HsColors.blue : Colors.white,
                     foregroundColor: _follow ? Colors.white : HsColors.blue,
                     tooltip: 'Follow me',
-                    onPressed: () {
-                      setState(() => _follow = true);
-                      if (_pos != null) _map.move(LatLng(_pos!.latitude, _pos!.longitude), 16.5);
-                    },
-                    child: const Icon(Icons.my_location),
+                    onPressed: _recenter,
+                    child: Icon(_follow ? Icons.navigation : Icons.my_location),
                   ),
                 ]),
               ),
@@ -473,7 +562,7 @@ class _TripScreenState extends State<TripScreen> {
       options: MapOptions(
         initialCenter: start,
         initialZoom: 14,
-        interactionOptions: const InteractionOptions(flags: InteractiveFlag.all & ~InteractiveFlag.rotate),
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.all),
         onMapReady: () {
           _mapReady = true;
           _fitAll();
@@ -498,10 +587,22 @@ class _TripScreenState extends State<TripScreen> {
               borderColor: Colors.white,
             ),
           ]),
+        if (_shown != null && !_moving && _pos != null && _pos!.accuracy > 8)
+          CircleLayer(circles: [
+            CircleMarker(
+              point: _shown!,
+              radius: math.min(_pos!.accuracy, 150),
+              useRadiusInMeter: true,
+              color: const Color(0x261783C1),
+              borderColor: const Color(0x661783C1),
+              borderStrokeWidth: 1,
+            ),
+          ]),
         MarkerLayer(markers: [
           for (final s in stops)
             Marker(
               point: LatLng(s.lat!, s.lon!),
+              rotate: true,
               width: 150,
               height: identical(s, next) ? 74 : 40,
               alignment: Alignment.center,
@@ -533,26 +634,81 @@ class _TripScreenState extends State<TripScreen> {
                 ]),
               ),
             ),
-          if (_pos != null)
+          if (_shown != null)
             Marker(
-              point: LatLng(_pos!.latitude, _pos!.longitude),
-              width: 44,
-              height: 44,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 6)],
-                ),
-                child: Transform.rotate(
-                  angle: (_pos!.heading.isFinite && _pos!.speed > 0.8 ? _pos!.heading : 0) * math.pi / 180,
-                  child: const Icon(Icons.navigation, color: HsColors.blue, size: 30),
-                ),
+              point: _shown!,
+              width: 56,
+              height: 56,
+              // drawn on the map (turns with it), then pointed along the heading
+              rotate: false,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 350),
+                transitionBuilder: (child, anim) => ScaleTransition(scale: anim, child: child),
+                child: _moving ? _arrow() : _dot(),
               ),
             ),
         ]),
         hsAttribution,
       ],
+    );
+  }
+
+  /// Moving: a navigation arrow pointing the way we're going.
+  Widget _arrow() {
+    return Transform.rotate(
+      key: const ValueKey('arrow'),
+      angle: _heading * math.pi / 180,
+      child: Stack(alignment: Alignment.center, children: [
+        Container(
+          width: 46,
+          height: 46,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0x331783C1),
+          ),
+        ),
+        const Icon(Icons.navigation, color: Colors.white, size: 44),
+        const Icon(Icons.navigation, color: HsColors.blue, size: 34),
+      ]),
+    );
+  }
+
+  /// Stopped: a blue dot with a faint cone showing which way the phone was last heading.
+  Widget _dot() {
+    return Transform.rotate(
+      key: const ValueKey('dot'),
+      angle: _heading * math.pi / 180,
+      child: SizedBox(
+        width: 56,
+        height: 56,
+        child: Stack(alignment: Alignment.center, clipBehavior: Clip.none, children: [
+        Positioned(
+          top: 4,
+          child: Container(
+            width: 26,
+            height: 22,
+            decoration: const BoxDecoration(
+              gradient: RadialGradient(
+                center: Alignment.bottomCenter,
+                radius: 1,
+                colors: [Color(0x881783C1), Color(0x001783C1)],
+              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+          ),
+        ),
+        Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: HsColors.blue,
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 3),
+            boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 5)],
+          ),
+        ),
+      ]),
+      ),
     );
   }
 
