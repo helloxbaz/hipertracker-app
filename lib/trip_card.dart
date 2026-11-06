@@ -4,6 +4,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'map_tiles.dart';
 import 'stop_actions.dart';
 import 'trip_screen.dart';
 
@@ -78,10 +79,7 @@ class _TodayTripCardState extends State<TodayTripCard> {
                           : null,
                     ),
                     children: [
-                      TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'org.traccar.client',
-                      ),
+                      hsTiles(),
                       if (pts.length > 1)
                         PolylineLayer(polylines: [
                           Polyline(

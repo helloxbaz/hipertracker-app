@@ -10,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'map_tiles.dart';
 import 'stop_actions.dart';
 
 /// The trip in progress: a full-screen map with the road route through the stops still to visit,
@@ -30,6 +31,7 @@ class _TripScreenState extends State<TripScreen> {
   final _map = MapController();
   bool _mapReady = false;
   bool _follow = true;
+  bool _satellite = false;
 
   TripPlan? _plan;
   List<List<double>> _track = const [];
@@ -325,6 +327,15 @@ class _TripScreenState extends State<TripScreen> {
                 bottom: 250,
                 child: Column(children: [
                   FloatingActionButton.small(
+                    heroTag: 'sat',
+                    backgroundColor: Colors.white,
+                    foregroundColor: HsColors.navy,
+                    tooltip: _satellite ? 'Map' : 'Satellite',
+                    onPressed: () => setState(() => _satellite = !_satellite),
+                    child: Icon(_satellite ? Icons.map_outlined : Icons.satellite_alt),
+                  ),
+                  const SizedBox(height: 10),
+                  FloatingActionButton.small(
                     heroTag: 'all',
                     backgroundColor: Colors.white,
                     foregroundColor: HsColors.navy,
@@ -381,10 +392,7 @@ class _TripScreenState extends State<TripScreen> {
         },
       ),
       children: [
-        TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'org.traccar.client',
-        ),
+        hsTiles(satellite: _satellite),
         if (_track.length > 1)
           PolylineLayer(polylines: [
             Polyline(points: [for (final p in _track) LatLng(p[0], p[1])], strokeWidth: 4, color: const Color(0x99607D8B)),
@@ -452,7 +460,7 @@ class _TripScreenState extends State<TripScreen> {
               ),
             ),
         ]),
-        const RichAttributionWidget(attributions: [TextSourceAttribution('OpenStreetMap contributors')]),
+        hsAttribution,
       ],
     );
   }
