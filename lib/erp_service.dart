@@ -293,6 +293,41 @@ class ErpService {
     return VehicleInfo(n(data?['mileage']), data?['own'] == 1, n(data?['fuel_price']));
   }
 
+  /// Leave types with what is left, and my leave applications.
+  static Future<LeaveInfo> myLeave() async {
+    final data = await _call('hipertracker_my_leave', const {}) as Map<String, dynamic>?;
+    return LeaveInfo.fromJson(data ?? const {});
+  }
+
+  /// Apply for leave; returns the application's name.
+  static Future<String> applyLeave(String type, DateTime from, DateTime to, {bool halfDay = false, String reason = ''}) async {
+    String d(DateTime x) => '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
+    final data = await _call('hipertracker_apply_leave', {
+      'leave_type': type,
+      'from_date': d(from),
+      'to_date': d(to),
+      'half_day': halfDay ? '1' : '0',
+      'reason': reason,
+    }) as Map<String, dynamic>?;
+    changes.value++;
+    return '${data?['name'] ?? ''}';
+  }
+
+  /// Expense types I can claim, my claims, and my trips with their petrol.
+  static Future<ExpenseInfo> myExpenses() async {
+    final data = await _call('hipertracker_my_expenses', const {}) as Map<String, dynamic>?;
+    return ExpenseInfo.fromJson(data ?? const {});
+  }
+
+  /// Saves an expense claim for approval. Each item is {'trip': plan} (petrol, worked out by the ERP)
+  /// or {'type', 'date', 'amount', 'description'}. Returns the claim's name.
+  static Future<String> claimExpense(List<Map<String, dynamic>> items, {String remark = ''}) async {
+    final data = await _call('hipertracker_claim_expense', {'items': jsonEncode(items), if (remark.isNotEmpty) 'remark': remark})
+        as Map<String, dynamic>?;
+    changes.value++;
+    return '${data?['name'] ?? ''}';
+  }
+
   /// Check In (IN) or Check Out (OUT) with the phone's current location.
   static Future<String> checkInOut(bool checkIn) async {
     Map<String, dynamic>? fix;
@@ -740,4 +775,108 @@ String hsMoney(double v) {
     b.write(s[i]);
   }
   return '\u20b9$b';
+}
+
+double _d(dynamic v) => double.tryParse('${v ?? ''}') ?? 0;
+String? _s(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
+
+class LeaveType {
+  final String name;
+  final double balance;
+  final bool allocated;
+  final bool unpaid;
+  const LeaveType(this.name, this.balance, this.allocated, this.unpaid);
+}
+
+class LeaveApplication {
+  final String name;
+  final String type;
+  final String from;
+  final String to;
+  final double days;
+  final bool halfDay;
+  final String status; // Open, Approved, Rejected, Cancelled
+  final String? reason;
+  const LeaveApplication(this.name, this.type, this.from, this.to, this.days, this.halfDay, this.status, this.reason);
+}
+
+class LeaveInfo {
+  final List<LeaveType> types;
+  final List<LeaveApplication> applications;
+  const LeaveInfo(this.types, this.applications);
+
+  factory LeaveInfo.fromJson(Map<String, dynamic> j) => LeaveInfo(
+        [
+          for (final t in (j['types'] as List? ?? const []))
+            LeaveType('${t['name']}', _d(t['balance']), t['allocated'] == 1, t['unpaid'] == 1),
+        ],
+        [
+          for (final a in (j['applications'] as List? ?? const []))
+            LeaveApplication('${a['name']}', '${a['leave_type']}', '${a['from']}', '${a['to']}', _d(a['days']),
+                a['half_day'] == 1, '${a['status'] ?? ''}', _s(a['reason'])),
+        ],
+      );
+}
+
+class ExpenseItem {
+  final String type;
+  final String date;
+  final double amount;
+  final String? description;
+  final String? trip;
+  const ExpenseItem(this.type, this.date, this.amount, this.description, this.trip);
+}
+
+class ExpenseClaim {
+  final String name;
+  final String date;
+  final double claimed;
+  final double sanctioned;
+  final String approval; // Draft, Approved, Rejected
+  final String status;
+  final List<ExpenseItem> items;
+  const ExpenseClaim(this.name, this.date, this.claimed, this.sanctioned, this.approval, this.status, this.items);
+}
+
+/// A trip and its petrol: km (travelled, else planned) / mileage x price.
+class TripFuel {
+  final String name;
+  final String title;
+  final String date;
+  final String status;
+  final double km;
+  final bool actual;
+  final double mileage;
+  final double price;
+  final double litres;
+  final double amount;
+  final String? claimedIn;
+  const TripFuel(this.name, this.title, this.date, this.status, this.km, this.actual, this.mileage, this.price, this.litres,
+      this.amount, this.claimedIn);
+}
+
+class ExpenseInfo {
+  final List<String> types;
+  final String? fuelType;
+  final List<ExpenseClaim> claims;
+  final List<TripFuel> trips;
+  const ExpenseInfo(this.types, this.fuelType, this.claims, this.trips);
+
+  factory ExpenseInfo.fromJson(Map<String, dynamic> j) => ExpenseInfo(
+        [for (final t in (j['types'] as List? ?? const [])) '$t'],
+        _s(j['fuel_type']),
+        [
+          for (final c in (j['claims'] as List? ?? const []))
+            ExpenseClaim('${c['name']}', '${c['date']}', _d(c['claimed']), _d(c['sanctioned']), '${c['approval'] ?? ''}',
+                '${c['status'] ?? ''}', [
+              for (final r in (c['items'] as List? ?? const []))
+                ExpenseItem('${r['type']}', '${r['date']}', _d(r['amount']), _s(r['description']), _s(r['trip'])),
+            ]),
+        ],
+        [
+          for (final t in (j['trips'] as List? ?? const []))
+            TripFuel('${t['name']}', '${t['title'] ?? t['name']}', '${t['date']}', '${t['status'] ?? ''}', _d(t['km']),
+                t['actual'] == 1, _d(t['mileage']), _d(t['price']), _d(t['litres']), _d(t['amount']), _s(t['claimed_in'])),
+        ],
+      );
 }

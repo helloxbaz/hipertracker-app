@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'expenses_screen.dart';
 import 'map_tiles.dart';
 import 'plan_trip_screen.dart';
 import 'stop_actions.dart';
@@ -165,6 +166,7 @@ class TripDetailScreen extends StatefulWidget {
 
 class _TripDetailScreenState extends State<TripDetailScreen> {
   TripPlan? _trip;
+  TripFuel? _fuel; // petrol of this trip and whether it is claimed
   String? _error;
 
   @override
@@ -176,6 +178,10 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
   Future<void> _load() async {
     try {
       final t = await ErpService.myTrip(widget.planName);
+      try {
+        final ex = await ErpService.myExpenses();
+        _fuel = ex.fuelType == null ? null : ex.trips.where((x) => x.name == t.name).firstOrNull;
+      } catch (_) {}
       if (mounted) {
         setState(() {
           _trip = t;
@@ -234,6 +240,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                     ]),
                     const SizedBox(height: 12),
                     _totals(t),
+                    if (_fuel != null) ...[const SizedBox(height: 10), _claim(_fuel!)],
                     const SizedBox(height: 18),
                     const Text('Stops', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: HsColors.navy)),
                     const SizedBox(height: 8),
@@ -288,6 +295,34 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         ]),
         hsAttribution,
       ],
+    );
+  }
+
+  /// Claim this trip's petrol as an expense (or show where it was claimed).
+  Widget _claim(TripFuel f) {
+    if (f.claimedIn != null) {
+      return Row(children: [
+        const Icon(Icons.check_circle, color: HsColors.onDuty, size: 20),
+        const SizedBox(width: 6),
+        Expanded(child: Text('Petrol claimed in ${f.claimedIn}', style: const TextStyle(color: HsColors.onDuty))),
+      ]);
+    }
+    return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+      onPressed: f.amount <= 0
+          ? () async {
+              await editVehicleMileage(context);
+              _load();
+            }
+          : () async {
+              final done = await Navigator.of(context)
+                  .push<bool>(MaterialPageRoute(builder: (_) => NewClaimScreen(trip: f.name)));
+              if (done == true) _load();
+            },
+      icon: const Icon(Icons.local_gas_station),
+      label: Text(f.amount <= 0
+          ? 'Set vehicle mileage to claim petrol'
+          : 'Claim petrol ${hsMoney(f.amount)} (${f.km.toStringAsFixed(1)} km ${f.actual ? 'travelled' : 'planned'})'),
     );
   }
 

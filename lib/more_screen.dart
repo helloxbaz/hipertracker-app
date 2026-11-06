@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'expenses_screen.dart';
+import 'leave_screen.dart';
 import 'log_screen.dart';
 import 'trips_screen.dart';
 import 'password_service.dart';
@@ -98,6 +100,20 @@ class _MoreScreenState extends State<MoreScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        if (connected)
+          HsTile(
+            icon: Icons.event_busy,
+            title: 'Leave',
+            subtitle: 'Apply for leave, see approvals',
+            onTap: () => _open(const LeaveScreen()),
+          ),
+        if (connected)
+          HsTile(
+            icon: Icons.receipt_long,
+            title: 'Expense claims',
+            subtitle: 'Claim petrol for trips and other expenses',
+            onTap: () => _open(const ExpensesScreen()),
+          ),
         if (connected)
           HsTile(
             icon: Icons.route,
