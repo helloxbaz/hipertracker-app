@@ -45,27 +45,11 @@ Future<void> _open(BuildContext context, Uri uri, String failure) async {
   messenger.showSnackBar(SnackBar(content: Text(failure)));
 }
 
-/// Google Maps from here through all the stops still to visit, in the planned order.
-Future<void> openDirections(BuildContext context, TripPlan plan) async {
-  final uri = plan.directions();
-  if (uri == null) return;
-  final more = plan.stops.where((s) => s.pending && s.hasLocation).length > 10;
-  if (more) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Google Maps takes 10 stops at a time — the next 10 are opened.')));
-  }
-  await _open(context, uri, 'Could not open Google Maps');
-}
-
-Future<void> navigateTo(BuildContext context, PlanStop s) =>
-    _open(context, Uri.https('www.google.com', '/maps/dir/', {'api': '1', 'destination': '${s.lat},${s.lon}'}),
-        'Could not open Google Maps');
-
 Future<void> callStop(BuildContext context, PlanStop s) =>
     _open(context, Uri(scheme: 'tel', path: s.phone!.replaceAll(RegExp(r'[^0-9+]'), '')), 'Could not start a call');
 
 /// Details of one stop with Navigate and Call.
-void showStopSheet(BuildContext context, PlanStop s, int number) {
+void showStopSheet(BuildContext context, PlanStop s, int number, {VoidCallback? onNavigate}) {
   showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
@@ -101,13 +85,19 @@ void showStopSheet(BuildContext context, PlanStop s, int number) {
               ),
               const SizedBox(width: 10),
             ],
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: s.hasLocation ? () => navigateTo(ctx, s) : null,
-                icon: const Icon(Icons.navigation),
-                label: const Text('Navigate'),
+            if (onNavigate != null)
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: s.hasLocation
+                      ? () {
+                          Navigator.of(ctx).pop();
+                          onNavigate();
+                        }
+                      : null,
+                  icon: const Icon(Icons.navigation),
+                  label: const Text('Start trip'),
+                ),
               ),
-            ),
           ]),
         ]),
       ),

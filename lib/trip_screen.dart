@@ -7,11 +7,13 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
 import 'stop_actions.dart';
+import 'voice_guide.dart';
 
 /// The trip in progress: a full-screen map with the road route through the stops still to visit,
 /// the next turn, distance and arrival time, and each stop ticking to "Reached" as the phone gets there.
@@ -55,9 +57,18 @@ class _TripScreenState extends State<TripScreen> {
   Timer? _bannerTimer;
   Timer? _poll;
 
+  final _voice = VoiceGuide();
+  int _spokenStep = -1; // step index the last announcement was about
+  int _spokenStage = 0; // 1 = far ahead, 2 = coming up, 3 = now
+  bool _greeted = false;
+  bool _offRouteReroute = false;
+  bool _saidAllDone = false;
+
   @override
   void initState() {
     super.initState();
+    _voice.init();
+    WakelockPlus.enable().catchError((_) {});
     _load();
     _startGps();
     _poll = Timer.periodic(const Duration(seconds: 30), (_) => _load());
@@ -68,6 +79,8 @@ class _TripScreenState extends State<TripScreen> {
     _gps?.cancel();
     _poll?.cancel();
     _bannerTimer?.cancel();
+    _voice.stop();
+    WakelockPlus.disable().catchError((_) {});
     super.dispose();
   }
 
@@ -133,6 +146,11 @@ class _TripScreenState extends State<TripScreen> {
         _reachedHere.add(next.idx);
         HapticFeedback.heavyImpact();
         _showBanner('Reached ${next.name}');
+        final after = _remaining().firstOrNull;
+        _voice.say(after == null
+            ? 'You have reached ${next.name}. That was the last stop. All stops are done, great work!'
+            : 'You have reached ${next.name}. Next stop, ${after.name}.');
+        _saidAllDone = after == null;
         _reroute();
         unawaited(_load());
       }
@@ -151,9 +169,13 @@ class _TripScreenState extends State<TripScreen> {
         }
       }
       _userAt = best;
-      if (bestD > _offRoute && DateTime.now().difference(_routedAt).inSeconds > 20) _reroute();
+      if (bestD > _offRoute && DateTime.now().difference(_routedAt).inSeconds > 20) {
+        _offRouteReroute = true;
+        _reroute();
+      }
     }
     if (first || _route == null) _reroute();
+    _speakDirections();
 
     if (_follow && _mapReady) {
       _map.move(LatLng(p.latitude, p.longitude), math.max(_map.camera.zoom, 15.5));
@@ -210,7 +232,18 @@ class _TripScreenState extends State<TripScreen> {
         _routedStops = stops;
         _routedAt = DateTime.now();
         _routeError = null;
+        _spokenStep = -1;
+        _spokenStage = 0;
       });
+      if (!_greeted) {
+        _greeted = true;
+        final to = r.legs.isNotEmpty ? r.legs.first[0].toDouble() : r.distance.toDouble();
+        _voice.say("Let's go. Your ${_plan!.done == 0 ? 'first' : 'next'} stop is ${stops.first.name}, "
+            '${VoiceGuide.distance(to)} away.');
+      } else if (_offRouteReroute) {
+        _voice.say('Route updated.');
+      }
+      _offRouteReroute = false;
       if (_follow && _mapReady && _pos == null) _fitAll();
     } catch (e) {
       if (mounted) setState(() => _routeError = 'Route not available right now');
@@ -252,6 +285,52 @@ class _TripScreenState extends State<TripScreen> {
       if (_stepAt[i] > _userAt) return (s, math.max(0, _cum[_stepAt[i]] - _cum[_userAt]));
     }
     return null;
+  }
+
+  /// Announce the next turn: once well before it, once when it's coming up, and when it's here.
+  void _speakDirections() {
+    final r = _route;
+    if (r == null || _pos == null || _cum.isEmpty) return;
+    if (_remaining().isEmpty) {
+      if (!_saidAllDone) {
+        _saidAllDone = true;
+        _voice.say('All stops are done. Great work!');
+      }
+      return;
+    }
+    for (var i = 0; i < r.steps.length; i++) {
+      final s = r.steps[i];
+      if (s.type == 'depart' || _stepAt[i] <= _userAt) continue;
+      final d = math.max(0.0, _cum[_stepAt[i]] - _cum[_userAt]);
+      if (i != _spokenStep) {
+        _spokenStep = i;
+        _spokenStage = 0;
+      }
+      final text = _spokenText(s);
+      if (d <= 40 && _spokenStage < 3) {
+        _spokenStage = 3;
+        _voice.say(s.type == 'arrive' ? text : '$text now.');
+      } else if (d <= 250 && d > 40 && _spokenStage < 2) {
+        _spokenStage = 2;
+        _voice.say('In ${VoiceGuide.distance(d)}, $text.');
+      } else if (d <= 1500 && d > 250 && _spokenStage < 1) {
+        _spokenStage = 1;
+        _voice.say('In ${VoiceGuide.distance(d)}, $text.');
+      } else if (d > 1500 && _spokenStage < 1) {
+        _spokenStage = 1;
+        _voice.say('Continue for ${VoiceGuide.distance(d)}.');
+      }
+      return;
+    }
+  }
+
+  String _spokenText(RouteStep s) {
+    if (s.type == 'arrive') {
+      final stop = s.leg < _routedStops.length ? _routedStops[s.leg].name : null;
+      return stop == null ? 'you will arrive at your stop' : 'you will arrive at $stop';
+    }
+    final t = s.text;
+    return t.isEmpty ? t : t[0].toLowerCase() + t.substring(1);
   }
 
   /// Distance (m) and time (s) to the next stop along the route.
@@ -326,6 +405,18 @@ class _TripScreenState extends State<TripScreen> {
                 right: 14,
                 bottom: 250,
                 child: Column(children: [
+                  FloatingActionButton.small(
+                    heroTag: 'voice',
+                    backgroundColor: Colors.white,
+                    foregroundColor: _voice.enabled ? HsColors.navy : HsColors.danger,
+                    tooltip: _voice.enabled ? 'Mute voice' : 'Voice on',
+                    onPressed: () {
+                      setState(() => _voice.enabled = !_voice.enabled);
+                      if (_voice.enabled) _voice.say('Voice directions on.');
+                    },
+                    child: Icon(_voice.enabled ? Icons.volume_up : Icons.volume_off),
+                  ),
+                  const SizedBox(height: 10),
                   FloatingActionButton.small(
                     heroTag: 'sat',
                     backgroundColor: Colors.white,
@@ -644,13 +735,46 @@ class _TripScreenState extends State<TripScreen> {
               ],
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: plan.directions() == null ? null : () => openDirections(context, plan),
-                  icon: const Icon(Icons.record_voice_over),
-                  label: const Text('Voice in Google Maps'),
+                  onPressed: _route == null ? null : _showSteps,
+                  icon: const Icon(Icons.format_list_numbered),
+                  label: const Text('All directions'),
                 ),
               ),
             ]),
           ]),
+        ),
+      ),
+    );
+  }
+
+  void _showSteps() {
+    final r = _route;
+    if (r == null) return;
+    final items = [
+      for (var i = 0; i < r.steps.length; i++)
+        if (_stepAt[i] > _userAt || r.steps[i].type == 'arrive') i,
+    ];
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        builder: (ctx, scroll) => ListView.separated(
+          controller: scroll,
+          itemCount: items.length,
+          separatorBuilder: (_, _) => const Divider(height: 1, indent: 64),
+          itemBuilder: (ctx, k) {
+            final s = r.steps[items[k]];
+            final d = math.max(0.0, _cum[_stepAt[items[k]]] - (_cum.isEmpty ? 0 : _cum[_userAt]));
+            return ListTile(
+              leading: Icon(_icon(s), color: s.type == 'arrive' ? HsColors.onDuty : HsColors.navy, size: 30),
+              title: Text(_stepText(s), style: TextStyle(fontWeight: s.type == 'arrive' ? FontWeight.w700 : FontWeight.w500)),
+              trailing: Text(_dist(d), style: const TextStyle(color: HsColors.textSecondary)),
+            );
+          },
         ),
       ),
     );

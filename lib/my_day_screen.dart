@@ -109,6 +109,9 @@ class _MyDayScreenState extends State<MyDayScreen> {
     );
   }
 
+  void _startTrip(TripPlan plan) =>
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TripScreen(planName: plan.name)));
+
   /// A trip plan from the office: the stops in order; reached / done is marked by the ERP from the phone's location.
   Widget _plan(TripPlan plan, MyDay day) {
     final next = plan.next;
@@ -138,7 +141,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
               ];
               return ListTile(
                 tileColor: isNext ? HsColors.cardHigh : null,
-                onTap: () => showStopSheet(context, s, i + 1),
+                onTap: () => showStopSheet(context, s, i + 1, onNavigate: () => _startTrip(plan)),
                 leading: SizedBox(width: 32, height: 32, child: StopBadge(number: i + 1, status: s.status)),
                 title: Text(isNext ? 'Next: ${s.name}' : s.name,
                     style: TextStyle(fontWeight: isNext ? FontWeight.w700 : FontWeight.w500)),
@@ -147,7 +150,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
                     ? IconButton(
                         tooltip: 'Navigate',
                         icon: const Icon(Icons.navigation, color: HsColors.blue),
-                        onPressed: () => navigateTo(context, s),
+                        onPressed: () => _startTrip(plan),
                       )
                     : Text(stopStatusLabel(s.status), style: const TextStyle(fontWeight: FontWeight.w600)),
               );
@@ -159,8 +162,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
             child: Row(children: [
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => TripScreen(planName: plan.name))),
+                  onPressed: () => _startTrip(plan),
                   icon: const Icon(Icons.navigation),
                   label: Text(plan.next == null ? 'View trip' : (plan.done > 0 ? 'Continue trip' : 'Start trip')),
                 ),
