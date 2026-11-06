@@ -258,7 +258,7 @@ class ErpService {
   /// Saves the worker's own trip plan for today with [places] in visiting order; returns the plan name.
   /// [start] = where the trip starts (the phone), so the km from there to the first stop count too.
   static Future<String> saveMyTrip(List<VisitPlace> places, {String? title, List<double>? start, double? mileage}) async {
-    final stops = jsonEncode([for (final p in places) {'type': p.type, 'name': p.name}]);
+    final stops = jsonEncode([for (final p in places) p.toStop()]);
     final data = await _call('hipertracker_save_my_trip', {
       'stops': stops,
       if (title != null && title.isNotEmpty) 'title': title,
@@ -285,12 +285,24 @@ class ErpService {
     return TripPlan.fromJson(data);
   }
 
-  /// The worker's vehicle mileage and the petrol price; pass [mileage] to save a new mileage.
-  static Future<VehicleInfo> myVehicle({double? mileage}) async {
-    final data =
-        await _call('hipertracker_my_vehicle', {if (mileage != null) 'mileage': '$mileage'}) as Map<String, dynamic>?;
+  /// The vehicle the office assigned to me, its mileage and the fuel price (all set in the ERP).
+  static Future<VehicleInfo> myVehicle() async {
+    final data = await _call('hipertracker_my_vehicle', const {}) as Map<String, dynamic>?;
     double n(dynamic v) => double.tryParse('${v ?? ''}') ?? 0;
-    return VehicleInfo(n(data?['mileage']), data?['own'] == 1, n(data?['fuel_price']));
+    String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
+    return VehicleInfo(n(data?['mileage']), data?['own'] == 1, n(data?['fuel_price']),
+        vehicle: str(data?['vehicle']), make: str(data?['make']), model: str(data?['model']), fuelType: str(data?['fuel_type']));
+  }
+
+  /// Changes the stops still to visit of one of my trips (stops already reached stay); recalculates km and fuel.
+  static Future<void> editMyTrip(String plan, List<VisitPlace> places, {List<double>? start}) async {
+    await _call('hipertracker_edit_my_trip', {
+      'plan': plan,
+      'stops': jsonEncode([for (final p in places) p.toStop()]),
+      if (start != null) 'start_lat': start[0].toStringAsFixed(6),
+      if (start != null) 'start_lon': start[1].toStringAsFixed(6),
+    });
+    changes.value++;
   }
 
   /// Leave types with what is left, and my leave applications.
@@ -474,11 +486,12 @@ class PlanStop {
   final String? phone;
   final String? address;
   final String? type; // Customer, Lead, CRM Deal, ...
+  final String? ref; // the record's name
   final double legKm; // road km from the previous stop (or from the start)
   final int legMinutes; // driving minutes from the previous stop
   final int minutes; // time spent at the stop
   const PlanStop(this.idx, this.name, this.task, this.lat, this.lon, this.planned, this.status, this.arrived, this.left,
-      {this.phone, this.address, this.type, this.legKm = 0, this.legMinutes = 0, this.minutes = 0});
+      {this.phone, this.address, this.type, this.ref, this.legKm = 0, this.legMinutes = 0, this.minutes = 0});
 
   factory PlanStop.fromJson(Map<String, dynamic> st) {
     String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
@@ -489,6 +502,7 @@ class PlanStop {
         phone: str(st['phone']),
         address: str(st['address']),
         type: str(st['type']),
+        ref: str(st['ref']),
         legKm: n(st['leg_km']) ?? 0,
         legMinutes: i(st['leg_minutes']),
         minutes: i(st['minutes']));
@@ -698,6 +712,14 @@ class VisitPlace {
       );
 
   String get key => '$type/$name';
+
+  /// A stop that is only a point on the map (no customer / lead record).
+  bool get isPoint => type.isEmpty;
+
+  Map<String, dynamic> toStop() => isPoint ? {'lat': lat, 'lon': lon, 'label': title} : {'type': type, 'name': name};
+
+  /// A stop of an existing trip, to edit it.
+  static VisitPlace fromStop(PlanStop s) => VisitPlace(s.type ?? '', s.ref ?? '${s.lat},${s.lon}', s.name, s.lat ?? 0, s.lon ?? 0, null);
 }
 
 /// One line of the activity log.
@@ -749,9 +771,15 @@ class DayLog {
 /// Vehicle mileage (km per litre) and petrol price per litre, for fuel estimates.
 class VehicleInfo {
   final double mileage;
-  final bool own; // set for this phone (not the company default)
+  final bool own; // the vehicle's own mileage (not the company default)
   final double fuelPrice;
-  const VehicleInfo(this.mileage, this.own, this.fuelPrice);
+  final String? vehicle; // number plate
+  final String? make;
+  final String? model;
+  final String? fuelType;
+  const VehicleInfo(this.mileage, this.own, this.fuelPrice, {this.vehicle, this.make, this.model, this.fuelType});
+
+  String get label => vehicle == null ? 'No vehicle assigned' : [vehicle!, if (model != null) model!].join(' · ');
 
   double litres(double km) => mileage > 0 ? km / mileage : 0;
   double cost(double km) => litres(km) * fuelPrice;

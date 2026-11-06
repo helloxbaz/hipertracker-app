@@ -193,6 +193,18 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     }
   }
 
+  bool _canEdit(TripPlan t) {
+    if (t.status != 'Planned' && t.status != 'In Progress') return false;
+    final d = t.date == null ? null : DateTime.tryParse(t.date!);
+    final now = DateTime.now();
+    return d == null || !d.isBefore(DateTime(now.year, now.month, now.day));
+  }
+
+  Future<void> _edit(TripPlan t) async {
+    final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => PlanTripScreen(edit: t)));
+    if (saved == true) _load();
+  }
+
   Future<void> _go(TripPlan t) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TripScreen(planName: t.name)));
     _load();
@@ -240,6 +252,15 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
                     ]),
                     const SizedBox(height: 12),
                     _totals(t),
+                    if (_canEdit(t)) ...[
+                      const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                        onPressed: () => _edit(t),
+                        icon: const Icon(Icons.edit_road),
+                        label: Text(t.done > 0 ? 'Change the stops still to visit' : 'Edit trip'),
+                      ),
+                    ],
                     if (_fuel != null) ...[const SizedBox(height: 10), _claim(_fuel!)],
                     const SizedBox(height: 18),
                     const Text('Stops', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: HsColors.navy)),
@@ -310,10 +331,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     return OutlinedButton.icon(
       style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
       onPressed: f.amount <= 0
-          ? () async {
-              await editVehicleMileage(context);
-              _load();
-            }
+          ? () => showMyVehicle(context)
           : () async {
               final done = await Navigator.of(context)
                   .push<bool>(MaterialPageRoute(builder: (_) => NewClaimScreen(trip: f.name)));
@@ -321,7 +339,7 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
             },
       icon: const Icon(Icons.local_gas_station),
       label: Text(f.amount <= 0
-          ? 'Set vehicle mileage to claim petrol'
+          ? 'No vehicle mileage yet – ask the office'
           : 'Claim petrol ${hsMoney(f.amount)} (${f.km.toStringAsFixed(1)} km ${f.actual ? 'travelled' : 'planned'})'),
     );
   }
@@ -401,49 +419,55 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
   }
 }
 
-/// Ask for the vehicle's mileage (km per litre) and save it for this phone; returns the new info.
-Future<VehicleInfo?> editVehicleMileage(BuildContext context, {VehicleInfo? current}) async {
-  final messenger = ScaffoldMessenger.of(context);
+/// The vehicle the office assigned to this worker, its mileage and fuel price. Set in the ERP (Vehicle), not here.
+Future<void> showMyVehicle(BuildContext context, {VehicleInfo? current}) async {
   var info = current;
   if (info == null) {
     try {
       info = await ErpService.myVehicle();
     } catch (_) {}
   }
-  if (!context.mounted) return null;
-  final m = info?.mileage ?? 0;
-  final ctl = TextEditingController(text: m > 0 ? m.toStringAsFixed(m % 1 == 0 ? 0 : 1) : '');
-  final value = await showDialog<double>(
+  if (!context.mounted) return;
+  final v = info;
+  await showModalBottomSheet<void>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: const Text('Vehicle mileage'),
-      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-        TextField(
-          controller: ctl,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(suffixText: 'km per litre', hintText: 'e.g. 40 for a bike, 15 for a car'),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          'Used to work out the petrol for your trips'
-          '${(info?.fuelPrice ?? 0) > 0 ? ' (petrol ${hsMoney(info!.fuelPrice)} a litre)' : ''}.',
-          style: const TextStyle(color: HsColors.textSecondary, fontSize: 13),
-        ),
-      ]),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, double.tryParse(ctl.text.trim())), child: const Text('Save')),
-      ],
+    showDragHandle: true,
+    builder: (ctx) => SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.two_wheeler, color: HsColors.navy, size: 30),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(v?.label ?? 'Could not load your vehicle',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: HsColors.navy)),
+            ),
+          ]),
+          const SizedBox(height: 14),
+          if (v != null && v.vehicle != null) ...[
+            if (v.make != null) _vline('Make', v.make!),
+            if (v.fuelType != null) _vline('Fuel', v.fuelType!),
+            _vline('Mileage', v.mileage > 0 ? '${v.mileage.toStringAsFixed(v.mileage % 1 == 0 ? 0 : 1)} km per litre${v.own ? '' : ' (company default)'}' : 'Not set'),
+            if (v.fuelPrice > 0) _vline('Fuel price', '${hsMoney(v.fuelPrice)} a litre'),
+          ],
+          const SizedBox(height: 8),
+          Text(
+            v == null || v.vehicle == null
+                ? 'The office assigns vehicles in the ERP (Vehicle > Employee). Ask them to assign yours so the fuel for your trips is worked out.'
+                : 'Set by the office in the ERP. Ask them if something is wrong.',
+            style: const TextStyle(color: HsColors.textSecondary),
+          ),
+        ]),
+      ),
     ),
   );
-  if (value == null || value <= 0) return null;
-  try {
-    final saved = await ErpService.myVehicle(mileage: value);
-    messenger.showSnackBar(SnackBar(content: Text('Mileage saved: ${ctl.text.trim()} km per litre')));
-    return saved;
-  } catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text(e.toString())));
-    return null;
-  }
 }
+
+Widget _vline(String k, String v) => Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(children: [
+        SizedBox(width: 90, child: Text(k, style: const TextStyle(color: HsColors.textSecondary))),
+        Expanded(child: Text(v, style: const TextStyle(fontWeight: FontWeight.w600))),
+      ]),
+    );

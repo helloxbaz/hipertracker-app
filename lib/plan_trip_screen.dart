@@ -15,7 +15,10 @@ import 'trips_screen.dart';
 /// The worker plans their own trip: pick customers / leads / deals to visit, the app suggests the best order
 /// from where they are and draws the road route, then saves it as a Trip Plan the office sees in the ERP.
 class PlanTripScreen extends StatefulWidget {
-  const PlanTripScreen({super.key});
+  const PlanTripScreen({super.key, this.edit});
+
+  /// A trip to change: its stops still to visit are loaded, and saving updates it (stops already reached stay).
+  final TripPlan? edit;
 
   @override
   State<PlanTripScreen> createState() => _PlanTripScreenState();
@@ -63,13 +66,15 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
     } catch (_) {}
   }
 
-  Future<void> _editMileage() async {
-    final v = await editVehicleMileage(context, current: _vehicle);
-    if (v != null && mounted) setState(() => _vehicle = v);
-  }
+  Future<void> _editMileage() => showMyVehicle(context, current: _vehicle);
 
   Future<void> _start() async {
     _loadVehicle();
+    final edit = widget.edit;
+    if (edit != null) {
+      _chosen.addAll([for (final s in edit.stops) if (s.pending && s.hasLocation) VisitPlace.fromStop(s)]);
+      _manual = true; // keep their order unless they ask for the best order
+    }
     try {
       if (await Geolocator.isLocationServiceEnabled()) {
         var perm = await Geolocator.checkPermission();
@@ -204,7 +209,13 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
     try {
       _routeTimer?.cancel();
       if (!_manual && _chosen.length > 1) await _bestOrder(quiet: true);
-      final name = await ErpService.saveMyTrip(_chosen, start: _here, mileage: _vehicle?.mileage);
+      final edit = widget.edit;
+      if (edit != null) {
+        await ErpService.editMyTrip(edit.name, _chosen, start: _here);
+        if (mounted) Navigator.of(context).pop(true);
+        return;
+      }
+      final name = await ErpService.saveMyTrip(_chosen, start: _here);
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => TripScreen(planName: name)));
     } catch (e) {
@@ -227,7 +238,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
     return Scaffold(
-      appBar: AppBar(title: const Text('Plan my trip')),
+      appBar: AppBar(title: Text(widget.edit == null ? 'Plan my trip' : 'Edit ${widget.edit!.title}')),
       body: Column(children: [
         SizedBox(height: math.max(200, h * 0.34), child: _mapView()),
         if (_route != null) _summary(_route!),
@@ -256,7 +267,9 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
                 icon: _saving
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.navigation),
-                label: Text(_chosen.isEmpty ? 'Pick places to visit' : 'Save & start trip'),
+                label: Text(_chosen.isEmpty
+                    ? 'Pick places to visit'
+                    : (widget.edit == null ? 'Save & start trip' : 'Save changes')),
               ),
             ),
           ]),
@@ -304,11 +317,13 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
                 const Icon(Icons.local_gas_station, size: 15, color: Colors.white),
                 const SizedBox(width: 3),
                 Text(
-                  v != null && v.mileage > 0 ? '${v.mileage.toStringAsFixed(v.mileage % 1 == 0 ? 0 : 1)} km/l' : 'Set mileage',
+                  v != null && v.mileage > 0
+                      ? '${v.vehicle ?? 'Vehicle'} · ${v.mileage.toStringAsFixed(v.mileage % 1 == 0 ? 0 : 1)} km/l'
+                      : 'No vehicle mileage',
                   style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, decoration: TextDecoration.underline, decorationColor: Colors.white),
                 ),
                 const SizedBox(width: 2),
-                const Icon(Icons.edit, size: 13, color: Colors.white),
+                const Icon(Icons.info_outline, size: 13, color: Colors.white),
               ]),
             ),
           ),
@@ -451,7 +466,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
                 ),
                 title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                 subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(p.type),
+                  Text(p.isPoint ? 'Point on the map' : p.type),
                   if (leg != null)
                     Row(children: [
                       const Icon(Icons.directions_car, size: 14, color: HsColors.blue),

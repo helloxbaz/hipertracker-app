@@ -123,10 +123,10 @@ class _MoreScreenState extends State<MoreScreen> {
           ),
         if (connected)
           HsTile(
-            icon: Icons.local_gas_station_outlined,
-            title: 'Vehicle mileage',
-            subtitle: 'For the petrol estimate of trips',
-            onTap: () => editVehicleMileage(context),
+            icon: Icons.two_wheeler,
+            title: 'My vehicle',
+            subtitle: 'Assigned by the office, used for trip fuel',
+            onTap: () => showMyVehicle(context),
           ),
         if (connected)
           HsTile(
