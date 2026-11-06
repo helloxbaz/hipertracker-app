@@ -256,14 +256,41 @@ class ErpService {
   }
 
   /// Saves the worker's own trip plan for today with [places] in visiting order; returns the plan name.
-  static Future<String> saveMyTrip(List<VisitPlace> places, {String? title}) async {
+  /// [start] = where the trip starts (the phone), so the km from there to the first stop count too.
+  static Future<String> saveMyTrip(List<VisitPlace> places, {String? title, List<double>? start, double? mileage}) async {
     final stops = jsonEncode([for (final p in places) {'type': p.type, 'name': p.name}]);
-    final data = await _call('hipertracker_save_my_trip', {'stops': stops, if (title != null && title.isNotEmpty) 'title': title})
-        as Map<String, dynamic>?;
+    final data = await _call('hipertracker_save_my_trip', {
+      'stops': stops,
+      if (title != null && title.isNotEmpty) 'title': title,
+      if (start != null) 'start_lat': start[0].toStringAsFixed(6),
+      if (start != null) 'start_lon': start[1].toStringAsFixed(6),
+      if (mileage != null && mileage > 0) 'mileage': '$mileage',
+    }) as Map<String, dynamic>?;
     final name = data?['name'];
     if (name == null) throw const ErpException('The trip could not be saved.');
     changes.value++;
     return '$name';
+  }
+
+  /// The worker's trip plans, newest first.
+  static Future<List<TripPlan>> myTrips({int days = 60}) async {
+    final data = await _call('hipertracker_my_trips', {'days': '$days'}) as List?;
+    return [for (final p in data ?? const []) TripPlan.fromJson(p as Map<String, dynamic>)];
+  }
+
+  /// One trip plan with all its stops and the route actually taken.
+  static Future<TripPlan> myTrip(String plan) async {
+    final data = await _call('hipertracker_my_trip', {'plan': plan}) as Map<String, dynamic>?;
+    if (data == null) throw const ErpException('Trip not found.');
+    return TripPlan.fromJson(data);
+  }
+
+  /// The worker's vehicle mileage and the petrol price; pass [mileage] to save a new mileage.
+  static Future<VehicleInfo> myVehicle({double? mileage}) async {
+    final data =
+        await _call('hipertracker_my_vehicle', {if (mileage != null) 'mileage': '$mileage'}) as Map<String, dynamic>?;
+    double n(dynamic v) => double.tryParse('${v ?? ''}') ?? 0;
+    return VehicleInfo(n(data?['mileage']), data?['own'] == 1, n(data?['fuel_price']));
   }
 
   /// Check In (IN) or Check Out (OUT) with the phone's current location.
@@ -412,8 +439,25 @@ class PlanStop {
   final String? phone;
   final String? address;
   final String? type; // Customer, Lead, CRM Deal, ...
+  final double legKm; // road km from the previous stop (or from the start)
+  final int legMinutes; // driving minutes from the previous stop
+  final int minutes; // time spent at the stop
   const PlanStop(this.idx, this.name, this.task, this.lat, this.lon, this.planned, this.status, this.arrived, this.left,
-      {this.phone, this.address, this.type});
+      {this.phone, this.address, this.type, this.legKm = 0, this.legMinutes = 0, this.minutes = 0});
+
+  factory PlanStop.fromJson(Map<String, dynamic> st) {
+    String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
+    double? n(dynamic v) => v == null ? null : double.tryParse('$v');
+    int i(dynamic v) => (n(v) ?? 0).round();
+    return PlanStop(i(st['idx']), '${st['name'] ?? 'Stop ${st['idx']}'}', str(st['task']), n(st['lat']), n(st['lon']),
+        str(st['planned']), '${st['status'] ?? 'Pending'}', str(st['arrived']), str(st['left']),
+        phone: str(st['phone']),
+        address: str(st['address']),
+        type: str(st['type']),
+        legKm: n(st['leg_km']) ?? 0,
+        legMinutes: i(st['leg_minutes']),
+        minutes: i(st['minutes']));
+  }
 
   bool get hasLocation => lat != null && lon != null && lat != 0 && lon != 0;
   bool get pending => status == 'Pending';
@@ -425,7 +469,67 @@ class TripPlan {
   final String title;
   final String status;
   final List<PlanStop> stops;
-  const TripPlan(this.name, this.title, this.status, this.stops);
+  final String? date; // yyyy-mm-dd
+  final double plannedKm;
+  final int plannedMinutes;
+  final double actualKm;
+  final double fuelLitres;
+  final double fuelCost;
+  final double mileage;
+  final double fuelPrice;
+  final String? started; // HH:MM
+  final String? finished;
+  final String? notes;
+  final String? progress; // "2 / 5"
+  final List<List<double>> track; // the route actually taken (trip details only)
+  const TripPlan(this.name, this.title, this.status, this.stops,
+      {this.date,
+      this.plannedKm = 0,
+      this.plannedMinutes = 0,
+      this.actualKm = 0,
+      this.fuelLitres = 0,
+      this.fuelCost = 0,
+      this.mileage = 0,
+      this.fuelPrice = 0,
+      this.started,
+      this.finished,
+      this.notes,
+      this.progress,
+      this.track = const []});
+
+  factory TripPlan.fromJson(Map<String, dynamic> p) {
+    double n(dynamic v) => double.tryParse('${v ?? ''}') ?? 0;
+    String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
+    return TripPlan(
+      '${p['name']}',
+      '${p['title'] ?? p['name']}',
+      '${p['status'] ?? ''}',
+      [for (final st in (p['stops'] as List? ?? const [])) PlanStop.fromJson(st as Map<String, dynamic>)],
+      date: str(p['date']),
+      plannedKm: n(p['planned_km']),
+      plannedMinutes: n(p['planned_minutes']).round(),
+      actualKm: n(p['actual_km']),
+      fuelLitres: n(p['fuel_litres']),
+      fuelCost: n(p['fuel_cost']),
+      mileage: n(p['mileage']),
+      fuelPrice: n(p['fuel_price']),
+      started: str(p['started']),
+      finished: str(p['finished']),
+      notes: str(p['notes']),
+      progress: str(p['progress']),
+      track: [
+        for (final t in (p['track'] as List? ?? const []))
+          if (t is List && t.length >= 2) [n(t[0]), n(t[1])],
+      ],
+    );
+  }
+
+  bool get isToday {
+    final d = date;
+    if (d == null) return true;
+    final now = DateTime.now();
+    return d == '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+  }
 
   PlanStop? get next {
     for (final s in stops) {
@@ -481,15 +585,8 @@ class MyDay {
       for (final st in (today['stops'] as List? ?? const []))
         DaySegment(false, '${st['start']}', '${st['end']}', i(st['minutes']), 0, 0, 0, st['ongoing'] == true),
     ]..sort((a, b) => a.start.compareTo(b.start));
-    String? str(dynamic v) => v == null || '$v'.isEmpty ? null : '$v';
     final plans = <TripPlan>[
-      for (final p in (j['plans'] as List? ?? const []))
-        TripPlan('${p['name']}', '${p['title'] ?? p['name']}', '${p['status'] ?? ''}', [
-          for (final st in (p['stops'] as List? ?? const []))
-            PlanStop(i(st['idx']), '${st['name'] ?? 'Stop ${st['idx']}'}', str(st['task']), _num(st['lat']),
-                _num(st['lon']), str(st['planned']), '${st['status'] ?? 'Pending'}', str(st['arrived']), str(st['left']),
-                phone: str(st['phone']), address: str(st['address']), type: str(st['type'])),
-        ]),
+      for (final p in (j['plans'] as List? ?? const [])) TripPlan.fromJson(p as Map<String, dynamic>),
     ];
     return MyDay(
       logs,
@@ -612,4 +709,35 @@ class DayLog {
       ],
     );
   }
+}
+
+/// Vehicle mileage (km per litre) and petrol price per litre, for fuel estimates.
+class VehicleInfo {
+  final double mileage;
+  final bool own; // set for this phone (not the company default)
+  final double fuelPrice;
+  const VehicleInfo(this.mileage, this.own, this.fuelPrice);
+
+  double litres(double km) => mileage > 0 ? km / mileage : 0;
+  double cost(double km) => litres(km) * fuelPrice;
+}
+
+/// "2 h 05 min" / "35 min"
+String hsDuration(int minutes) {
+  if (minutes < 60) return '$minutes min';
+  return '${minutes ~/ 60} h ${(minutes % 60).toString().padLeft(2, '0')} min';
+}
+
+/// "12.4 km" / "800 m"
+String hsKm(double km) => km < 1 ? '${(km * 1000).round()} m' : '${km.toStringAsFixed(km < 100 ? 1 : 0)} km';
+
+/// "₹1,240"
+String hsMoney(double v) {
+  final s = v.round().toString();
+  final b = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    if (i > 0 && (s.length - i) % 3 == 0) b.write(',');
+    b.write(s[i]);
+  }
+  return '\u20b9$b';
 }

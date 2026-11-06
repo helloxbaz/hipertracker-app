@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_theme.dart';
 import 'erp_service.dart';
 import 'log_screen.dart';
+import 'trips_screen.dart';
 import 'password_service.dart';
 import 'preferences.dart';
 import 'settings_screen.dart';
@@ -97,6 +98,20 @@ class _MoreScreenState extends State<MoreScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        if (connected)
+          HsTile(
+            icon: Icons.route,
+            title: 'My trips',
+            subtitle: 'Distance, time and petrol of every trip',
+            onTap: () => _open(const TripsScreen()),
+          ),
+        if (connected)
+          HsTile(
+            icon: Icons.local_gas_station_outlined,
+            title: 'Vehicle mileage',
+            subtitle: 'For the petrol estimate of trips',
+            onTap: () => editVehicleMileage(context),
+          ),
         if (connected)
           HsTile(
             icon: Icons.history,

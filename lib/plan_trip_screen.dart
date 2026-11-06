@@ -10,6 +10,7 @@ import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
 import 'trip_screen.dart';
+import 'trips_screen.dart';
 
 /// The worker plans their own trip: pick customers / leads / deals to visit, the app suggests the best order
 /// from where they are and draws the road route, then saves it as a Trip Plan the office sees in the ERP.
@@ -37,6 +38,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
   RoutePlan? _route;
   bool _saving = false;
   bool _mapReady = false;
+  VehicleInfo? _vehicle;
 
   @override
   void initState() {
@@ -54,7 +56,20 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
 
   List<double>? get _here => _pos == null ? null : [_pos!.latitude, _pos!.longitude];
 
+  Future<void> _loadVehicle() async {
+    try {
+      final v = await ErpService.myVehicle();
+      if (mounted) setState(() => _vehicle = v);
+    } catch (_) {}
+  }
+
+  Future<void> _editMileage() async {
+    final v = await editVehicleMileage(context, current: _vehicle);
+    if (v != null && mounted) setState(() => _vehicle = v);
+  }
+
   Future<void> _start() async {
+    _loadVehicle();
     try {
       if (await Geolocator.isLocationServiceEnabled()) {
         var perm = await Geolocator.checkPermission();
@@ -187,7 +202,9 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
     if (_chosen.isEmpty || _saving) return;
     setState(() => _saving = true);
     try {
-      final name = await ErpService.saveMyTrip(_chosen);
+      _routeTimer?.cancel();
+      if (!_manual && _chosen.length > 1) await _bestOrder(quiet: true);
+      final name = await ErpService.saveMyTrip(_chosen, start: _here, mileage: _vehicle?.mileage);
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(MaterialPageRoute<void>(builder: (_) => TripScreen(planName: name)));
     } catch (e) {
@@ -213,16 +230,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
       appBar: AppBar(title: const Text('Plan my trip')),
       body: Column(children: [
         SizedBox(height: math.max(200, h * 0.34), child: _mapView()),
-        if (_route != null)
-          Container(
-            width: double.infinity,
-            color: HsColors.navy,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text(
-              '${_chosen.length} stop${_chosen.length == 1 ? '' : 's'} · ${_km(_route!.distance.toDouble())} · about ${_mins(_route!.duration)} by road',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
-          ),
+        if (_route != null) _summary(_route!),
         if (_loading || _ordering) const LinearProgressIndicator(minHeight: 2),
         Expanded(child: _list()),
       ]),
@@ -254,6 +262,58 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
           ]),
         ),
       ),
+    );
+  }
+
+  /// Whole trip: road km, driving time, when it would end if started now, petrol needed and its cost.
+  Widget _summary(RoutePlan r) {
+    final km = r.distance / 1000.0;
+    final mins = (r.duration / 60).round();
+    final v = _vehicle;
+    final end = DateTime.now().add(Duration(minutes: mins));
+    Widget stat(String value, String label) => Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(value, style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w800)),
+            Text(label, style: const TextStyle(color: Color(0xFFBFD3E6), fontSize: 11)),
+          ]),
+        );
+    return Container(
+      width: double.infinity,
+      color: HsColors.navy,
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          stat(hsKm(km), 'Total distance'),
+          stat(hsDuration(mins), 'Driving time'),
+          stat(v != null && v.mileage > 0 ? '${v.litres(km).toStringAsFixed(1)} L' : '–', 'Petrol'),
+          stat(v != null && v.mileage > 0 && v.fuelPrice > 0 ? hsMoney(v.cost(km)) : '–', 'Petrol cost'),
+        ]),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            child: Text(
+              '${_chosen.length} stop${_chosen.length == 1 ? '' : 's'} · driving done by ${TimeOfDay.fromDateTime(end).format(context)} if you start now',
+              style: const TextStyle(color: Color(0xFFD6E6F5), fontSize: 12),
+            ),
+          ),
+          InkWell(
+            onTap: _editMileage,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.local_gas_station, size: 15, color: Colors.white),
+                const SizedBox(width: 3),
+                Text(
+                  v != null && v.mileage > 0 ? '${v.mileage.toStringAsFixed(v.mileage % 1 == 0 ? 0 : 1)} km/l' : 'Set mileage',
+                  style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, decoration: TextDecoration.underline, decorationColor: Colors.white),
+                ),
+                const SizedBox(width: 2),
+                const Icon(Icons.edit, size: 13, color: Colors.white),
+              ]),
+            ),
+          ),
+        ]),
+      ]),
     );
   }
 
@@ -380,7 +440,8 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
             },
             itemBuilder: (context, i) {
               final p = _chosen[i];
-              final leg = _route != null && i < _route!.legs.length && _pos != null ? _route!.legs[i] : null;
+              final li = _pos != null ? i : i - 1; // without a location the route starts at stop 1
+              final leg = _route != null && li >= 0 && li < _route!.legs.length ? _route!.legs[li] : null;
               return ListTile(
                 key: ValueKey(p.key),
                 leading: CircleAvatar(
@@ -389,10 +450,21 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
                   child: Text('${i + 1}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
                 ),
                 title: Text(p.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-                subtitle: Text([
-                  p.type,
-                  if (leg != null) '${_km(leg[0].toDouble())} · ${_mins(leg[1])} from ${i == 0 ? 'you' : 'stop $i'}',
-                ].join(' · ')),
+                subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(p.type),
+                  if (leg != null)
+                    Row(children: [
+                      const Icon(Icons.directions_car, size: 14, color: HsColors.blue),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          '${_km(leg[0].toDouble())} · ${_mins(leg[1])} from ${i == 0 ? 'you' : 'stop $i'}',
+                          style: const TextStyle(color: HsColors.blue, fontWeight: FontWeight.w600, fontSize: 13),
+                        ),
+                      ),
+                    ]),
+                ]),
+                isThreeLine: leg != null,
                 trailing: IconButton(
                   tooltip: 'Remove',
                   icon: const Icon(Icons.close),

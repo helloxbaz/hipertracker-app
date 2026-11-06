@@ -139,6 +139,19 @@ class _TodayTripCardState extends State<TodayTripCard> {
                       : '${started ? 'Next' : 'First'}: ${next.name}${next.planned != null ? ' · ${next.planned}' : ''}',
                   style: const TextStyle(color: HsColors.textSecondary),
                 ),
+                if (plan.plannedKm > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      [
+                        hsKm(plan.plannedKm),
+                        if (plan.plannedMinutes > 0) '${hsDuration(plan.plannedMinutes)} driving',
+                        if (plan.fuelLitres > 0) '${plan.fuelLitres.toStringAsFixed(1)} L petrol',
+                        if (plan.fuelCost > 0) hsMoney(plan.fuelCost),
+                      ].join(' · '),
+                      style: const TextStyle(color: HsColors.blue, fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),

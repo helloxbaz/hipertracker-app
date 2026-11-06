@@ -7,6 +7,7 @@ import 'log_screen.dart';
 import 'plan_trip_screen.dart';
 import 'stop_actions.dart';
 import 'trip_screen.dart';
+import 'trips_screen.dart';
 
 /// My Day tab: today's distance, time on duty and location-off count, today's trip plans, plan my trip.
 /// The full history (trips, stops, check ins, location off) is in More > Activity log.
@@ -223,6 +224,8 @@ class _MyDayScreenState extends State<MyDayScreen> {
                   const SizedBox(height: 18),
                   _action(Icons.add_road, 'Plan my trip', 'Pick customers to visit — we suggest the best order',
                       () => _push(const PlanTripScreen())),
+                  _action(Icons.route, 'My trips', 'Every trip with distance, time and petrol',
+                      () => _push(const TripsScreen())),
                   _action(Icons.history, 'Activity log', 'Trips, stops, check ins and location off, day by day',
                       () => _push(const LogScreen())),
                 ],
