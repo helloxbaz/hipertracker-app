@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:traccar_client/main.dart';
 import 'package:traccar_client/password_service.dart';
 import 'package:traccar_client/preferences.dart';
+import 'package:traccar_client/trip_card.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
@@ -314,6 +315,7 @@ class MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 24), children: [
           if (!gpsOn) _locationWarning(),
           _dutyCard(),
+          if (ErpService.isConnected) const TodayTripCard(),
           const SizedBox(height: 12),
           Row(children: [
             _statusTile(

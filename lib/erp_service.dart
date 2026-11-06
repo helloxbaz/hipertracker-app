@@ -218,6 +218,14 @@ class ErpService {
     return MyDay.fromJson(data);
   }
 
+  /// Road route from [from] through [stops] (each [lat, lon]) in order, with turn-by-turn steps.
+  static Future<RoutePlan> route(List<double> from, List<List<double>> stops) async {
+    final points = [from, ...stops].map((p) => '${p[0].toStringAsFixed(6)},${p[1].toStringAsFixed(6)}').join(';');
+    final data = await _call('hipertracker_route', {'points': points}) as Map<String, dynamic>?;
+    if (data == null) throw const ErpException('No route found.');
+    return RoutePlan.fromJson(data);
+  }
+
   /// Check In (IN) or Check Out (OUT) with the phone's current location.
   static Future<String> checkInOut(bool checkIn) async {
     Map<String, dynamic>? fix;
@@ -455,6 +463,44 @@ class MyDay {
       [
         for (final p in (today['track'] as List? ?? const []))
           if (p is List && p.length >= 2 && _num(p[0]) != null && _num(p[1]) != null) [_num(p[0])!, _num(p[1])!],
+      ],
+    );
+  }
+}
+
+/// One turn-by-turn instruction of a road route.
+class RouteStep {
+  final double lat;
+  final double lon;
+  final String text;
+  final String type; // depart, turn, roundabout, arrive, ...
+  final String modifier; // left, slight right, straight, uturn, ...
+  final int distance; // metres until the next instruction
+  final int leg; // 0 = on the way to the first remaining stop
+  const RouteStep(this.lat, this.lon, this.text, this.type, this.modifier, this.distance, this.leg);
+}
+
+/// A road route through the remaining stops (line as [lat, lon] points).
+class RoutePlan {
+  final List<List<double>> line;
+  final int distance; // metres
+  final int duration; // seconds
+  final List<List<int>> legs; // [metres, seconds] per stop
+  final List<RouteStep> steps;
+  const RoutePlan(this.line, this.distance, this.duration, this.legs, this.steps);
+
+  factory RoutePlan.fromJson(Map<String, dynamic> j) {
+    double d(dynamic v) => double.tryParse('$v') ?? 0;
+    int n(dynamic v) => (double.tryParse('$v') ?? 0).round();
+    return RoutePlan(
+      [for (final p in (j['line'] as List? ?? const [])) if (p is List && p.length >= 2) [d(p[0]), d(p[1])]],
+      n(j['distance']),
+      n(j['duration']),
+      [for (final l in (j['legs'] as List? ?? const [])) [n(l['distance']), n(l['duration'])]],
+      [
+        for (final s in (j['steps'] as List? ?? const []))
+          RouteStep(d(s['lat']), d(s['lon']), '${s['text'] ?? ''}', '${s['type'] ?? ''}', '${s['modifier'] ?? ''}',
+              n(s['distance']), n(s['leg'])),
       ],
     );
   }

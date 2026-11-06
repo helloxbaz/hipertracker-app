@@ -3,8 +3,8 @@ import 'package:intl/intl.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
-import 'route_map_screen.dart';
 import 'stop_actions.dart';
+import 'trip_screen.dart';
 
 /// My Day tab: today's distance, time on duty and GPS-off count, then the check in / out history.
 class MyDayScreen extends StatefulWidget {
@@ -158,19 +158,11 @@ class _MyDayScreenState extends State<MyDayScreen> {
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
             child: Row(children: [
               Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(builder: (_) => RouteMapScreen(plan: plan, track: day.track))),
-                  icon: const Icon(Icons.map_outlined),
-                  label: const Text('Route map'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
                 child: FilledButton.icon(
-                  onPressed: plan.directions() == null ? null : () => openDirections(context, plan),
-                  icon: const Icon(Icons.directions),
-                  label: const Text('Directions'),
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(builder: (_) => TripScreen(planName: plan.name))),
+                  icon: const Icon(Icons.navigation),
+                  label: Text(plan.next == null ? 'View trip' : (plan.done > 0 ? 'Continue trip' : 'Start trip')),
                 ),
               ),
             ]),
