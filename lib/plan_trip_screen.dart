@@ -371,9 +371,8 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _chosen.length,
-            onReorder: (from, to) {
+            onReorderItem: (from, to) {
               setState(() {
-                if (to > from) to -= 1;
                 _chosen.insert(to, _chosen.removeAt(from));
                 _manual = true;
               });
