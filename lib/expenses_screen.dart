@@ -30,7 +30,10 @@ Widget _chip(String text) {
 
 /// Expense claims: my claims and their approval, and make a new one (trip petrol fills in by itself).
 class ExpensesScreen extends StatefulWidget {
-  const ExpensesScreen({super.key});
+  const ExpensesScreen({super.key, this.embedded = false});
+
+  /// Shown inside the Requests tab (no app bar; the + button makes a claim).
+  final bool embedded;
 
   @override
   State<ExpensesScreen> createState() => _ExpensesScreenState();
@@ -43,10 +46,24 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
   @override
   void initState() {
     super.initState();
+    ErpService.changes.addListener(_load);
     _load();
   }
 
+  @override
+  void dispose() {
+    ErpService.changes.removeListener(_load);
+    super.dispose();
+  }
+
+  Future<void> _edit(ExpenseClaim c) async {
+    if (!c.editable) return;
+    final done = await Navigator.of(context).push<bool>(MaterialPageRoute(builder: (_) => NewClaimScreen(existing: c)));
+    if (done == true) _load();
+  }
+
   Future<void> _load() async {
+    if (!ErpService.isConnected) return;
     try {
       final i = await ErpService.myExpenses();
       if (mounted) {
@@ -70,9 +87,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
     final info = _info;
     final unclaimed = info?.trips.where((t) => t.claimedIn == null && t.amount > 0).toList() ?? const <TripFuel>[];
     return Scaffold(
-      appBar: AppBar(title: const Text('Expense claims')),
-      floatingActionButton: FloatingActionButton.extended(
-          onPressed: _new, icon: const Icon(Icons.add), label: const Text('New claim')),
+      appBar: widget.embedded ? null : AppBar(title: const Text('Expense claims')),
+      floatingActionButton: widget.embedded
+          ? null
+          : FloatingActionButton.extended(onPressed: _new, icon: const Icon(Icons.add), label: const Text('New claim')),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(padding: const EdgeInsets.fromLTRB(16, 8, 16, 96), children: [
@@ -106,7 +124,10 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
           for (final c in info?.claims ?? const <ExpenseClaim>[])
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: HsPanel(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: c.editable ? () => _edit(c) : null,
+                child: HsPanel(
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
@@ -142,7 +163,18 @@ class _ExpensesScreenState extends State<ExpensesScreen> {
                       child: Text('Approved ${hsMoney(c.sanctioned)}',
                           style: const TextStyle(color: HsColors.onDuty, fontWeight: FontWeight.w600)),
                     ),
+                  if (c.editable)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 6),
+                      child: Row(children: [
+                        Icon(Icons.edit, size: 14, color: HsColors.blue),
+                        SizedBox(width: 4),
+                        Text('Tap to change or withdraw',
+                            style: TextStyle(color: HsColors.blue, fontSize: 12, fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
                 ]),
+              ),
               ),
             ),
         ]),
@@ -161,10 +193,13 @@ class _Other {
 
 /// A new claim: tick the trips whose petrol to claim (the amount comes from the trip), add other expenses, send.
 class NewClaimScreen extends StatefulWidget {
-  const NewClaimScreen({super.key, this.trip});
+  const NewClaimScreen({super.key, this.trip, this.existing});
 
   /// A trip to claim the petrol of (ticked when the screen opens).
   final String? trip;
+
+  /// A claim still waiting for approval, to change or withdraw.
+  final ExpenseClaim? existing;
 
   @override
   State<NewClaimScreen> createState() => _NewClaimScreenState();
@@ -199,6 +234,16 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
         _error = null;
         final t = widget.trip;
         if (t != null && i.trips.any((x) => x.name == t && x.claimedIn == null && x.amount > 0)) _trips.add(t);
+        final e = widget.existing;
+        if (e != null && _trips.isEmpty && _others.isEmpty) {
+          for (final it in e.items) {
+            if (it.trip != null) {
+              _trips.add(it.trip!);
+            } else {
+              _others.add(_Other(it.type, DateTime.tryParse(it.date) ?? DateTime.now(), it.amount, it.description ?? ''));
+            }
+          }
+        }
       });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -300,8 +345,9 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
       final name = await ErpService.claimExpense([
         for (final t in _trips) {'trip': t},
         for (final o in _others) {'type': o.type, 'date': d(o.date), 'amount': o.amount, 'description': o.note},
-      ], remark: _remark.text.trim());
-      messenger.showSnackBar(SnackBar(content: Text('Claim $name sent for approval.')));
+      ], remark: _remark.text.trim(), claim: widget.existing?.name);
+      messenger.showSnackBar(SnackBar(
+          content: Text(widget.existing != null ? 'Claim $name changed.' : 'Claim $name sent for approval.')));
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text(e.toString())));
@@ -310,12 +356,53 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
     }
   }
 
+  bool _free(TripFuel t) => t.amount > 0 && (t.claimedIn == null || t.claimedIn == widget.existing?.name);
+
+  Future<void> _withdraw() async {
+    final e = widget.existing;
+    if (e == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Withdraw this claim?'),
+        content: const Text('It will be removed and the approver will no longer see it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: HsColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Withdraw'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ErpService.withdrawClaim(e.name);
+      messenger.showSnackBar(const SnackBar(content: Text('Claim withdrawn.')));
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text(err.toString())));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final info = _info;
     final trips = info?.trips ?? const <TripFuel>[];
     return Scaffold(
-      appBar: AppBar(title: const Text('New expense claim')),
+      appBar: AppBar(
+        title: Text(widget.existing == null ? 'New expense claim' : 'Change claim'),
+        actions: [
+          if (widget.existing != null)
+            TextButton.icon(
+              onPressed: _withdraw,
+              icon: const Icon(Icons.delete_outline, color: HsColors.danger),
+              label: const Text('Withdraw', style: TextStyle(color: HsColors.danger)),
+            ),
+        ],
+      ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -325,7 +412,9 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
             icon: _saving
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.send),
-            label: Text(_trips.isEmpty && _others.isEmpty ? 'Add an expense' : 'Claim ${hsMoney(_total)}'),
+            label: Text(_trips.isEmpty && _others.isEmpty
+                ? 'Add an expense'
+                : '${widget.existing == null ? 'Claim' : 'Save'} ${hsMoney(_total)}'),
           ),
         ),
       ),
@@ -357,18 +446,18 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
                       child: CheckboxListTile(
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                         value: _trips.contains(t.name),
-                        onChanged: t.claimedIn != null || t.amount <= 0
+                        onChanged: !_free(t)
                             ? null
                             : (v) => setState(() => v == true ? _trips.add(t.name) : _trips.remove(t.name)),
                         title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
                         subtitle: Text(
-                          t.claimedIn != null
+                          t.claimedIn != null && !_free(t)
                               ? 'Already claimed in ${t.claimedIn}'
                               : t.amount <= 0
                                   ? 'Set your vehicle mileage to work out the petrol'
                                   : '${_date(t.date)} · ${t.km.toStringAsFixed(1)} km ${t.actual ? 'travelled' : 'planned'} · '
                                       '${t.litres.toStringAsFixed(2)} L',
-                          style: TextStyle(color: t.claimedIn != null ? HsColors.textSecondary : null),
+                          style: TextStyle(color: _free(t) ? null : HsColors.textSecondary),
                         ),
                         secondary: Text(t.amount > 0 ? hsMoney(t.amount) : '–',
                             style: const TextStyle(fontWeight: FontWeight.w800, color: HsColors.navy)),

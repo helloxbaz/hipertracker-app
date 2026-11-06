@@ -5,8 +5,9 @@ import 'main.dart';
 import 'main_screen.dart';
 import 'more_screen.dart';
 import 'my_day_screen.dart';
+import 'requests_screen.dart';
 
-/// Bottom-bar shell, the same pattern as the Hipersign mobile app: Home, My Day, More.
+/// Bottom-bar shell, the same pattern as the Hipersign mobile app: Home, My Day, (+), Requests, More.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -19,20 +20,44 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = <(IconData, String, Widget)>[
-      (Icons.home_outlined, 'Home', MainScreen(key: mainScreenKey)),
-      (Icons.event_note_outlined, 'My Day', const MyDayScreen()),
-      (Icons.more_horiz, 'More', const MoreScreen()),
+    final pages = <Widget>[
+      MainScreen(key: mainScreenKey),
+      const MyDayScreen(),
+      const RequestsScreen(),
+      const MoreScreen(),
     ];
+    // bar: Home, My Day, [+], Requests, More
+    final tabs = <(IconData, String, int)>[
+      (Icons.home_outlined, 'Home', 0),
+      (Icons.event_note_outlined, 'My Day', 1),
+      (Icons.inbox_outlined, 'Requests', 2),
+      (Icons.more_horiz, 'More', 3),
+    ];
+    Widget nav((IconData, String, int) t) =>
+        _NavItem(icon: t.$1, label: t.$2, selected: _tab == t.$3, onTap: () => setState(() => _tab = t.$3));
     return Scaffold(
-      body: IndexedStack(index: _tab, children: [for (final t in tabs) t.$3]),
+      body: IndexedStack(index: _tab, children: pages),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+      floatingActionButton: FloatingActionButton(
+        tooltip: 'Plan a trip, leave, expense',
+        backgroundColor: HsColors.accent,
+        foregroundColor: HsColors.onAccent,
+        shape: const CircleBorder(),
+        onPressed: () => showQuickAdd(context),
+        child: const Icon(Icons.add, size: 30),
+      ),
       bottomNavigationBar: BottomAppBar(
         color: HsColors.background,
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 8,
         padding: EdgeInsets.zero,
         height: 68,
         child: Row(children: [
-          for (var i = 0; i < tabs.length; i++)
-            _NavItem(icon: tabs[i].$1, label: tabs[i].$2, selected: _tab == i, onTap: () => setState(() => _tab = i)),
+          nav(tabs[0]),
+          nav(tabs[1]),
+          const Expanded(child: SizedBox()),
+          nav(tabs[2]),
+          nav(tabs[3]),
         ]),
       ),
     );

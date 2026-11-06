@@ -311,8 +311,9 @@ class ErpService {
     return LeaveInfo.fromJson(data ?? const {});
   }
 
-  /// Apply for leave; returns the application's name.
-  static Future<String> applyLeave(String type, DateTime from, DateTime to, {bool halfDay = false, String reason = ''}) async {
+  /// Apply for leave (or change [name] while it waits for approval); returns the application's name.
+  static Future<String> applyLeave(String type, DateTime from, DateTime to,
+      {bool halfDay = false, String reason = '', String? name}) async {
     String d(DateTime x) => '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
     final data = await _call('hipertracker_apply_leave', {
       'leave_type': type,
@@ -320,9 +321,22 @@ class ErpService {
       'to_date': d(to),
       'half_day': halfDay ? '1' : '0',
       'reason': reason,
+      if (name != null) 'name': name,
     }) as Map<String, dynamic>?;
     changes.value++;
     return '${data?['name'] ?? ''}';
+  }
+
+  /// Withdraw a leave application that is still waiting for approval.
+  static Future<void> withdrawLeave(String name) async {
+    await _call('hipertracker_apply_leave', {'name': name, 'action': 'delete'});
+    changes.value++;
+  }
+
+  /// Withdraw an expense claim that is still waiting for approval.
+  static Future<void> withdrawClaim(String name) async {
+    await _call('hipertracker_claim_expense', {'claim': name, 'action': 'delete'});
+    changes.value++;
   }
 
   /// Expense types I can claim, my claims, and my trips with their petrol.
@@ -333,9 +347,13 @@ class ErpService {
 
   /// Saves an expense claim for approval. Each item is {'trip': plan} (petrol, worked out by the ERP)
   /// or {'type', 'date', 'amount', 'description'}. Returns the claim's name.
-  static Future<String> claimExpense(List<Map<String, dynamic>> items, {String remark = ''}) async {
-    final data = await _call('hipertracker_claim_expense', {'items': jsonEncode(items), if (remark.isNotEmpty) 'remark': remark})
-        as Map<String, dynamic>?;
+  /// Pass [claim] to change that claim while it waits for approval.
+  static Future<String> claimExpense(List<Map<String, dynamic>> items, {String remark = '', String? claim}) async {
+    final data = await _call('hipertracker_claim_expense', {
+      'items': jsonEncode(items),
+      if (remark.isNotEmpty) 'remark': remark,
+      if (claim != null) 'claim': claim,
+    }) as Map<String, dynamic>?;
     changes.value++;
     return '${data?['name'] ?? ''}';
   }
@@ -825,6 +843,9 @@ class LeaveApplication {
   final bool halfDay;
   final String status; // Open, Approved, Rejected, Cancelled
   final String? reason;
+
+  /// Still waiting for approval, so it can be changed or withdrawn.
+  bool get editable => status == 'Open';
   const LeaveApplication(this.name, this.type, this.from, this.to, this.days, this.halfDay, this.status, this.reason);
 }
 
@@ -863,6 +884,9 @@ class ExpenseClaim {
   final String approval; // Draft, Approved, Rejected
   final String status;
   final List<ExpenseItem> items;
+
+  /// Still waiting for approval, so it can be changed or withdrawn.
+  bool get editable => approval == 'Draft' && status == 'Waiting for approval';
   const ExpenseClaim(this.name, this.date, this.claimed, this.sanctioned, this.approval, this.status, this.items);
 }
 

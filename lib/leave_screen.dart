@@ -22,7 +22,10 @@ String _date(String iso) {
 
 /// Leave: what is left of each kind of leave, my applications and their approval, and apply for leave.
 class LeaveScreen extends StatefulWidget {
-  const LeaveScreen({super.key});
+  const LeaveScreen({super.key, this.embedded = false});
+
+  /// Shown inside the Requests tab (no app bar; the + button applies for leave).
+  final bool embedded;
 
   @override
   State<LeaveScreen> createState() => _LeaveScreenState();
@@ -35,10 +38,26 @@ class _LeaveScreenState extends State<LeaveScreen> {
   @override
   void initState() {
     super.initState();
+    ErpService.changes.addListener(_load);
     _load();
   }
 
+  @override
+  void dispose() {
+    ErpService.changes.removeListener(_load);
+    super.dispose();
+  }
+
+  Future<void> _open(LeaveApplication a) async {
+    final info = _info;
+    if (info == null || !a.editable) return;
+    final done = await Navigator.of(context)
+        .push<bool>(MaterialPageRoute(builder: (_) => ApplyLeaveScreen(types: info.types, existing: a)));
+    if (done == true) _load();
+  }
+
   Future<void> _load() async {
+    if (!ErpService.isConnected) return;
     try {
       final i = await ErpService.myLeave();
       if (mounted) {
@@ -64,8 +83,8 @@ class _LeaveScreenState extends State<LeaveScreen> {
   Widget build(BuildContext context) {
     final info = _info;
     return Scaffold(
-      appBar: AppBar(title: const Text('Leave')),
-      floatingActionButton: info == null
+      appBar: widget.embedded ? null : AppBar(title: const Text('Leave')),
+      floatingActionButton: info == null || widget.embedded
           ? null
           : FloatingActionButton.extended(
               onPressed: _apply, icon: const Icon(Icons.event_busy), label: const Text('Apply for leave')),
@@ -104,7 +123,10 @@ class _LeaveScreenState extends State<LeaveScreen> {
             for (final a in info.applications)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: HsPanel(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: a.editable ? () => _open(a) : null,
+                  child: HsPanel(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Expanded(
@@ -117,6 +139,16 @@ class _LeaveScreenState extends State<LeaveScreen> {
                         ),
                         if (a.reason != null && a.reason!.trim().isNotEmpty)
                           Text(a.reason!.trim(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                        if (a.editable)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 4),
+                            child: Row(children: [
+                              Icon(Icons.edit, size: 14, color: HsColors.blue),
+                              SizedBox(width: 4),
+                              Text('Tap to change or withdraw',
+                                  style: TextStyle(color: HsColors.blue, fontSize: 12, fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
                       ]),
                     ),
                     const SizedBox(width: 8),
@@ -134,6 +166,7 @@ class _LeaveScreenState extends State<LeaveScreen> {
                     ),
                   ]),
                 ),
+                ),
               ),
           ],
         ]),
@@ -144,8 +177,13 @@ class _LeaveScreenState extends State<LeaveScreen> {
 
 /// Apply for leave: kind, first and last day (or half a day), and why.
 class ApplyLeaveScreen extends StatefulWidget {
-  const ApplyLeaveScreen({super.key, required this.types});
-  final List<LeaveType> types;
+  const ApplyLeaveScreen({super.key, this.types, this.existing});
+
+  /// Leave types with what is left (loaded here when not given).
+  final List<LeaveType>? types;
+
+  /// An application still waiting for approval, to change or withdraw.
+  final LeaveApplication? existing;
 
   @override
   State<ApplyLeaveScreen> createState() => _ApplyLeaveScreenState();
@@ -158,6 +196,7 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
   bool _half = false;
   final _reason = TextEditingController();
   bool _saving = false;
+  List<LeaveType> _types = const [];
 
   @override
   void initState() {
@@ -165,8 +204,60 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
     final now = DateTime.now();
     _from = DateTime(now.year, now.month, now.day);
     _to = _from;
-    final usable = widget.types.where((t) => t.balance > 0 || t.unpaid).toList();
-    _type = usable.isNotEmpty ? usable.first.name : (widget.types.isNotEmpty ? widget.types.first.name : null);
+    final e = widget.existing;
+    if (e != null) {
+      _from = DateTime.tryParse(e.from) ?? _from;
+      _to = DateTime.tryParse(e.to) ?? _from;
+      _half = e.halfDay;
+      _reason.text = e.reason ?? '';
+      _type = e.type;
+    }
+    if (widget.types != null) {
+      _setTypes(widget.types!);
+    } else {
+      ErpService.myLeave().then((i) {
+        if (mounted) setState(() => _setTypes(i.types));
+      }).catchError((Object e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      });
+    }
+  }
+
+  void _setTypes(List<LeaveType> types) {
+    _types = types;
+    if (_type == null || !types.any((t) => t.name == _type)) {
+      final usable = types.where((t) => t.balance > 0 || t.unpaid).toList();
+      _type = usable.isNotEmpty ? usable.first.name : (types.isNotEmpty ? types.first.name : null);
+    }
+  }
+
+  Future<void> _withdraw() async {
+    final e = widget.existing;
+    if (e == null) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Withdraw this leave?'),
+        content: const Text('It will be removed and your manager will no longer see it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: HsColors.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Withdraw'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ErpService.withdrawLeave(e.name);
+      messenger.showSnackBar(const SnackBar(content: Text('Leave withdrawn.')));
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (err) {
+      messenger.showSnackBar(SnackBar(content: Text(err.toString())));
+    }
   }
 
   @override
@@ -202,8 +293,12 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final name = await ErpService.applyLeave(type, _from, _to, halfDay: _half, reason: _reason.text.trim());
-      messenger.showSnackBar(SnackBar(content: Text('Leave applied ($name). Your manager will approve it.')));
+      final name = await ErpService.applyLeave(type, _from, _to,
+          halfDay: _half, reason: _reason.text.trim(), name: widget.existing?.name);
+      messenger.showSnackBar(SnackBar(
+          content: Text(widget.existing != null
+              ? 'Leave changed ($name).'
+              : 'Leave applied ($name). Your manager will approve it.')));
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text(e.toString())));
@@ -215,9 +310,19 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
   @override
   Widget build(BuildContext context) {
     final fmt = DateFormat('EEE, d MMM yyyy');
-    final chosen = widget.types.where((t) => t.name == _type).firstOrNull;
+    final chosen = _types.where((t) => t.name == _type).firstOrNull;
     return Scaffold(
-      appBar: AppBar(title: const Text('Apply for leave')),
+      appBar: AppBar(
+        title: Text(widget.existing == null ? 'Apply for leave' : 'Change leave'),
+        actions: [
+          if (widget.existing != null)
+            TextButton.icon(
+              onPressed: _withdraw,
+              icon: const Icon(Icons.delete_outline, color: HsColors.danger),
+              label: const Text('Withdraw', style: TextStyle(color: HsColors.danger)),
+            ),
+        ],
+      ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -227,16 +332,17 @@ class _ApplyLeaveScreenState extends State<ApplyLeaveScreen> {
             icon: _saving
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.send),
-            label: Text('Apply for ${_days(_dayCount)} day${_dayCount == 1 ? '' : 's'}'),
+            label: Text('${widget.existing == null ? 'Apply for' : 'Save'} ${_days(_dayCount)} day${_dayCount == 1 ? '' : 's'}'),
           ),
         ),
       ),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         DropdownButtonFormField<String>(
-          initialValue: _type,
+          key: ValueKey('${_types.length}-$_type'),
+          initialValue: _types.any((t) => t.name == _type) ? _type : null,
           decoration: const InputDecoration(labelText: 'Kind of leave', border: OutlineInputBorder()),
           items: [
-            for (final t in widget.types)
+            for (final t in _types)
               DropdownMenuItem(
                 value: t.name,
                 child: Text('${t.name}  ·  ${t.unpaid ? 'unpaid' : (t.allocated ? '${_days(t.balance)} left' : 'not given')}'),
