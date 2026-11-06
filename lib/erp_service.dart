@@ -361,7 +361,14 @@ class PlanStop {
   final String status; // Pending / Reached / Left / Skipped
   final String? arrived;
   final String? left;
-  const PlanStop(this.idx, this.name, this.task, this.lat, this.lon, this.planned, this.status, this.arrived, this.left);
+  final String? phone;
+  final String? address;
+  final String? type; // Customer, Lead, CRM Deal, ...
+  const PlanStop(this.idx, this.name, this.task, this.lat, this.lon, this.planned, this.status, this.arrived, this.left,
+      {this.phone, this.address, this.type});
+
+  bool get hasLocation => lat != null && lon != null && lat != 0 && lon != 0;
+  bool get pending => status == 'Pending';
 }
 
 /// A trip plan for today: the stops to visit, in order.
@@ -380,9 +387,21 @@ class TripPlan {
   }
 
   int get done => stops.where((s) => s.status != 'Pending').length;
+
+  /// Google Maps directions from where the phone is now through the stops still to visit, in plan order.
+  /// The Maps app takes up to 9 stops on the way plus the destination.
+  Uri? directions() {
+    final left = stops.where((s) => s.pending && s.hasLocation).take(10).toList();
+    if (left.isEmpty) return null;
+    String ll(PlanStop s) => '${s.lat},${s.lon}';
+    final q = <String, String>{'api': '1', 'destination': ll(left.last), 'travelmode': 'driving'};
+    if (left.length > 1) q['waypoints'] = left.sublist(0, left.length - 1).map(ll).join('|');
+    return Uri.https('www.google.com', '/maps/dir/', q);
+  }
 }
 
 class MyDay {
+  final List<List<double>> track; // today's route so far, [lat, lon]
   final List<TripPlan> plans; // today's trip plans
   final List<DaySegment> segments; // today's trips and stops, in time order
   final List<AttendanceLog> logs; // newest first
@@ -392,7 +411,7 @@ class MyDay {
   final DateTime? first;
   final DateTime? last;
   const MyDay(this.logs, this.distanceKm, this.points, this.gpsOff, this.first, this.last, this.segments,
-      [this.plans = const []]);
+      [this.plans = const [], this.track = const []]);
 
   static DateTime? _time(dynamic v) => v == null ? null : DateTime.tryParse('$v'.replaceFirst(' ', 'T'));
   static double? _num(dynamic v) => v == null ? null : double.tryParse('$v');
@@ -420,7 +439,8 @@ class MyDay {
         TripPlan('${p['name']}', '${p['title'] ?? p['name']}', '${p['status'] ?? ''}', [
           for (final st in (p['stops'] as List? ?? const []))
             PlanStop(i(st['idx']), '${st['name'] ?? 'Stop ${st['idx']}'}', str(st['task']), _num(st['lat']),
-                _num(st['lon']), str(st['planned']), '${st['status'] ?? 'Pending'}', str(st['arrived']), str(st['left'])),
+                _num(st['lon']), str(st['planned']), '${st['status'] ?? 'Pending'}', str(st['arrived']), str(st['left']),
+                phone: str(st['phone']), address: str(st['address']), type: str(st['type'])),
         ]),
     ];
     return MyDay(
@@ -432,6 +452,10 @@ class MyDay {
       _time(today['last']),
       segments,
       plans,
+      [
+        for (final p in (today['track'] as List? ?? const []))
+          if (p is List && p.length >= 2 && _num(p[0]) != null && _num(p[1]) != null) [_num(p[0])!, _num(p[1])!],
+      ],
     );
   }
 }

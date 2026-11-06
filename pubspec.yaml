@@ -28,6 +28,8 @@ dependencies:
   share_plus: ^13.3.1
   managed_configurations: ^1.2.0
   url_launcher: ^6.3.1
+  flutter_map: ^8.2.1
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:

@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'route_map_screen.dart';
+import 'stop_actions.dart';
 
 /// My Day tab: today's distance, time on duty and GPS-off count, then the check in / out history.
 class MyDayScreen extends StatefulWidget {
@@ -108,22 +109,8 @@ class _MyDayScreenState extends State<MyDayScreen> {
     );
   }
 
-  static const _stopColors = {
-    'Pending': HsColors.textSecondary,
-    'Reached': Color(0xFFF59E0B),
-    'Left': HsColors.onDuty,
-    'Skipped': Color(0xFF9CA3AF),
-  };
-
-  Future<void> _navigate(PlanStop s) async {
-    final uri = Uri.parse('https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lon}');
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not open maps')));
-    }
-  }
-
-  /// A trip plan from the office: the stops in order; reached / left is marked by the ERP from the phone's location.
-  Widget _plan(TripPlan plan) {
+  /// A trip plan from the office: the stops in order; reached / done is marked by the ERP from the phone's location.
+  Widget _plan(TripPlan plan, MyDay day) {
     final next = plan.next;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
@@ -147,30 +134,47 @@ class _MyDayScreenState extends State<MyDayScreen> {
               final parts = <String>[
                 if (s.arrived != null) 'Reached ${s.arrived}' else if (s.planned != null) 'Planned ${s.planned}',
                 if (s.left != null) 'left ${s.left}',
-                if (s.task != null && s.task!.trim().isNotEmpty) s.task!.trim(),
+                if (s.type != null) s.type!,
               ];
               return ListTile(
                 tileColor: isNext ? HsColors.cardHigh : null,
-                leading: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: _stopColors[s.status] ?? HsColors.textSecondary,
-                  child: s.status == 'Left'
-                      ? const Icon(Icons.check, size: 18, color: Colors.white)
-                      : Text('${i + 1}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                ),
+                onTap: () => showStopSheet(context, s, i + 1),
+                leading: SizedBox(width: 32, height: 32, child: StopBadge(number: i + 1, status: s.status)),
                 title: Text(isNext ? 'Next: ${s.name}' : s.name,
                     style: TextStyle(fontWeight: isNext ? FontWeight.w700 : FontWeight.w500)),
                 subtitle: parts.isEmpty ? null : Text(parts.join(' · ')),
-                trailing: s.status == 'Pending' && s.lat != null && s.lon != null
+                trailing: s.pending && s.hasLocation
                     ? IconButton(
                         tooltip: 'Navigate',
                         icon: const Icon(Icons.navigation, color: HsColors.blue),
-                        onPressed: () => _navigate(s),
+                        onPressed: () => navigateTo(context, s),
                       )
-                    : Text(s.status == 'Left' ? 'Done' : s.status, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    : Text(stopStatusLabel(s.status), style: const TextStyle(fontWeight: FontWeight.w600)),
               );
             }),
           ],
+          const Divider(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            child: Row(children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(builder: (_) => RouteMapScreen(plan: plan, track: day.track))),
+                  icon: const Icon(Icons.map_outlined),
+                  label: const Text('Route map'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: plan.directions() == null ? null : () => openDirections(context, plan),
+                  icon: const Icon(Icons.directions),
+                  label: const Text('Directions'),
+                ),
+              ),
+            ]),
+          ),
         ]),
       ),
     ]);
@@ -286,7 +290,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
                   const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator())),
                 if (day != null) ...[
                   _todayCard(day),
-                  for (final plan in day.plans) _plan(plan),
+                  for (final plan in day.plans) _plan(plan, day),
                   if (day.segments.isNotEmpty) _segments(day),
                   if (day.logs.isEmpty)
                     const Padding(
