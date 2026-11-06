@@ -3,10 +3,13 @@ import 'package:intl/intl.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'log_screen.dart';
+import 'plan_trip_screen.dart';
 import 'stop_actions.dart';
 import 'trip_screen.dart';
 
-/// My Day tab: today's distance, time on duty and GPS-off count, then the check in / out history.
+/// My Day tab: today's distance, time on duty and location-off count, today's trip plans, plan my trip.
+/// The full history (trips, stops, check ins, location off) is in More > Activity log.
 class MyDayScreen extends StatefulWidget {
   const MyDayScreen({super.key});
 
@@ -96,7 +99,7 @@ class _MyDayScreenState extends State<MyDayScreen> {
         Row(children: [
           _stat('${day.distanceKm.toStringAsFixed(1)} km', 'Travelled'),
           _stat(_hours(worked), 'On duty'),
-          _stat('${day.gpsOff}', 'GPS turned off', color: day.gpsOff > 0 ? HsColors.danger : HsColors.navy),
+          _stat('${day.gpsOff}', 'Location off', color: day.gpsOff > 0 ? HsColors.danger : HsColors.navy),
         ]),
         if (day.first != null) ...[
           const SizedBox(height: 12),
@@ -108,6 +111,27 @@ class _MyDayScreenState extends State<MyDayScreen> {
       ]),
     );
   }
+
+  Future<void> _push(Widget screen) async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => screen));
+    _load();
+  }
+
+  Widget _action(IconData icon, String title, String subtitle, VoidCallback onTap) => Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          tileColor: HsColors.card,
+          leading: CircleAvatar(
+            backgroundColor: HsColors.navy,
+            child: Icon(icon, color: Colors.white, size: 20),
+          ),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(subtitle, style: const TextStyle(color: HsColors.textSecondary)),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: onTap,
+        ),
+      );
 
   void _startTrip(TripPlan plan) =>
       Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => TripScreen(planName: plan.name)));
@@ -174,95 +198,6 @@ class _MyDayScreenState extends State<MyDayScreen> {
     ]);
   }
 
-  /// Today's trips (blue) and stops (purple), in time order.
-  Widget _segments(MyDay day) {
-    const purple = Color(0xFF7C3AED);
-    final trips = day.segments.where((x) => x.isTrip).length;
-    final stops = day.segments.length - trips;
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-        child: Text('Today: $trips trip${trips == 1 ? '' : 's'}, $stops stop${stops == 1 ? '' : 's'}',
-            style: const TextStyle(fontWeight: FontWeight.w700, color: HsColors.navy)),
-      ),
-      HsPanel(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(children: [
-          for (var i = 0; i < day.segments.length; i++) ...[
-            if (i > 0) const Divider(indent: 56),
-            Builder(builder: (context) {
-              final x = day.segments[i];
-              return ListTile(
-                leading: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: x.isTrip ? HsColors.blue : purple,
-                  child: x.isTrip
-                      ? const Icon(Icons.directions_car, size: 18, color: Colors.white)
-                      : const Text('P', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                ),
-                title: Text(x.isTrip
-                    ? '${x.distanceKm.toStringAsFixed(1)} km trip'
-                    : (x.ongoing ? 'Stopped now' : 'Stopped')),
-                subtitle: Text(x.isTrip
-                    ? '${_hours(Duration(minutes: x.minutes))} · avg ${x.avgSpeed} km/h · max ${x.maxSpeed} km/h'
-                    : _hours(Duration(minutes: x.minutes))),
-                trailing: Text('${x.start}–${x.ongoing ? 'now' : x.end}',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-              );
-            }),
-          ],
-        ]),
-      ),
-    ]);
-  }
-
-  List<Widget> _history(MyDay day) {
-    // newest day first; inside a day, oldest log first
-    final byDay = <DateTime, List<AttendanceLog>>{};
-    for (final l in day.logs) {
-      byDay.putIfAbsent(DateTime(l.time.year, l.time.month, l.time.day), () => []).add(l);
-    }
-    final now = DateTime.now();
-    final out = <Widget>[];
-    for (final entry in byDay.entries) {
-      final logs = entry.value.reversed.toList();
-      final isToday = _sameDay(entry.key, now);
-      final label = isToday
-          ? 'Today'
-          : _sameDay(entry.key, now.subtract(const Duration(days: 1)))
-              ? 'Yesterday'
-              : DateFormat('EEE, d MMM').format(entry.key);
-      out.add(Padding(
-        padding: const EdgeInsets.fromLTRB(4, 18, 4, 8),
-        child: Row(children: [
-          Text(label, style: const TextStyle(fontWeight: FontWeight.w700, color: HsColors.navy)),
-          const Spacer(),
-          Text(_hours(_worked(logs, isToday: isToday)), style: const TextStyle(color: HsColors.textSecondary)),
-        ]),
-      ));
-      out.add(HsPanel(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Column(children: [
-          for (var i = 0; i < logs.length; i++) ...[
-            if (i > 0) const Divider(indent: 56),
-            ListTile(
-              leading: CircleAvatar(
-                radius: 16,
-                backgroundColor: logs[i].isIn ? HsColors.onDutyBg : HsColors.offDutyBg,
-                child: Icon(logs[i].isIn ? Icons.login : Icons.logout, size: 18,
-                    color: logs[i].isIn ? HsColors.onDuty : HsColors.textSecondary),
-              ),
-              title: Text(logs[i].isIn ? 'Checked in' : 'Checked out'),
-              subtitle: logs[i].lat == null ? const Text('No location') : null,
-              trailing: Text(DateFormat.jm().format(logs[i].time), style: const TextStyle(fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ]),
-      ));
-    }
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final day = _day;
@@ -285,15 +220,11 @@ class _MyDayScreenState extends State<MyDayScreen> {
                 if (day != null) ...[
                   _todayCard(day),
                   for (final plan in day.plans) _plan(plan, day),
-                  if (day.segments.isNotEmpty) _segments(day),
-                  if (day.logs.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(32),
-                      child: Text('No check ins in the last two weeks.',
-                          textAlign: TextAlign.center, style: TextStyle(color: HsColors.textSecondary)),
-                    )
-                  else
-                    ..._history(day),
+                  const SizedBox(height: 18),
+                  _action(Icons.add_road, 'Plan my trip', 'Pick customers to visit — we suggest the best order',
+                      () => _push(const PlanTripScreen())),
+                  _action(Icons.history, 'Activity log', 'Trips, stops, check ins and location off, day by day',
+                      () => _push(const LogScreen())),
                 ],
               ]),
             ),

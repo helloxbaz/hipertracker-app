@@ -54,6 +54,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
   final Set<int> _reachedHere = {}; // stops the phone has just reached (before the ERP confirms)
   String? _banner;
+  bool _panelOpen = false; // bottom panel: compact (next stop only) or open (all stops and buttons)
   Timer? _bannerTimer;
   Timer? _poll;
 
@@ -477,9 +478,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
               _mapView(plan),
               Positioned(left: 0, right: 0, top: 0, child: SafeArea(child: _topBar(plan))),
               Positioned(left: 0, right: 0, bottom: 0, child: _bottomPanel(plan)),
-              Positioned(
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOutCubic,
                 right: 14,
-                bottom: 250,
+                bottom: (_panelOpen ? 300 : 130) + MediaQuery.of(context).padding.bottom,
                 child: Column(children: [
                   FloatingActionButton.small(
                     heroTag: 'compass',
@@ -751,7 +754,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(_dist(step.$2),
+                              Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
                                   style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
                               Text(_stepText(step.$1),
                                   maxLines: 2,
@@ -773,7 +776,15 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final to = _toNext();
     final done = plan.stops.where((s) => _status(s) != 'Pending').length;
     final eta = to == null ? null : DateTime.now().add(Duration(seconds: to.$2.round()));
-    return Container(
+    void toggle([bool? open]) => setState(() => _panelOpen = open ?? !_panelOpen);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onVerticalDragEnd: (d) {
+        final v = d.primaryVelocity ?? 0;
+        if (v < -150) toggle(true);
+        if (v > 150) toggle(false);
+      },
+      child: Container(
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
@@ -782,9 +793,39 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            // handle: tap or drag to show / hide the details
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: toggle,
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Column(children: [
+                  Container(
+                    width: 40,
+                    height: 5,
+                    decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(3)),
+                  ),
+                  Icon(_panelOpen ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
+                      size: 20, color: HsColors.textSecondary),
+                ]),
+              ),
+            ),
+            if (next == null)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text('All stops done',
+                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: HsColors.onDuty)),
+              ),
             if (next != null) ...[
+              InkWell(
+                onTap: toggle,
+                child: 
               Row(children: [
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -803,7 +844,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                         style: const TextStyle(color: HsColors.textSecondary, fontSize: 13)),
                   ]),
               ]),
-              if (next.task != null && next.task!.trim().isNotEmpty)
+              ),
+              if (_panelOpen && next.task != null && next.task!.trim().isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Text(next.task!.trim(), maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -825,6 +867,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
               const SizedBox(width: 10),
               Text('$done of ${plan.stops.length} reached', style: const TextStyle(fontWeight: FontWeight.w600)),
             ]),
+            if (_panelOpen) ...[
             const SizedBox(height: 10),
             SizedBox(
               height: 64,
@@ -897,8 +940,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 ),
               ),
             ]),
+            ],
           ]),
+          ),
         ),
+      ),
       ),
     );
   }

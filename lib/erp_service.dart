@@ -226,6 +226,46 @@ class ErpService {
     return RoutePlan.fromJson(data);
   }
 
+  /// Everything the worker did on [day]: check in / out, trips, stops, location off, places reached.
+  static Future<DayLog> myLog(DateTime day) async {
+    final d = '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+    final data = await _call('hipertracker_my_log', {'date': d}) as Map<String, dynamic>?;
+    if (data == null) throw const ErpException('The ERP did not send the log.');
+    return DayLog.fromJson(data);
+  }
+
+  /// Customers, leads, deals, suppliers ... that have a location, nearest to [lat], [lon] first.
+  static Future<List<VisitPlace>> visitPlaces({double? lat, double? lon, String q = ''}) async {
+    final data = await _call('hipertracker_visit_places', {
+      if (lat != null) 'lat': '$lat',
+      if (lon != null) 'lon': '$lon',
+      if (q.isNotEmpty) 'q': q,
+    }) as List?;
+    return [for (final p in data ?? const []) VisitPlace.fromJson(p as Map<String, dynamic>)];
+  }
+
+  /// The best order to visit [places] (each [lat, lon]) starting at [from]: indexes into [places].
+  static Future<List<int>> bestOrder(List<double> from, List<List<double>> places) async {
+    final points = [from, ...places].map((p) => '${p[0].toStringAsFixed(6)},${p[1].toStringAsFixed(6)}').join(';');
+    final data = await _call('hipertracker_best_order', {'points': points}) as Map<String, dynamic>?;
+    final order = [for (final i in (data?['order'] as List? ?? const [])) (int.tryParse('$i') ?? 0) - 1]
+        .where((i) => i >= 0 && i < places.length)
+        .toList();
+    if (order.length != places.length) return [for (var i = 0; i < places.length; i++) i];
+    return order;
+  }
+
+  /// Saves the worker's own trip plan for today with [places] in visiting order; returns the plan name.
+  static Future<String> saveMyTrip(List<VisitPlace> places, {String? title}) async {
+    final stops = jsonEncode([for (final p in places) {'type': p.type, 'name': p.name}]);
+    final data = await _call('hipertracker_save_my_trip', {'stops': stops, if (title != null && title.isNotEmpty) 'title': title})
+        as Map<String, dynamic>?;
+    final name = data?['name'];
+    if (name == null) throw const ErpException('The trip could not be saved.');
+    changes.value++;
+    return '$name';
+  }
+
   /// Check In (IN) or Check Out (OUT) with the phone's current location.
   static Future<String> checkInOut(bool checkIn) async {
     Map<String, dynamic>? fix;
@@ -501,6 +541,74 @@ class RoutePlan {
         for (final s in (j['steps'] as List? ?? const []))
           RouteStep(d(s['lat']), d(s['lon']), '${s['text'] ?? ''}', '${s['type'] ?? ''}', '${s['modifier'] ?? ''}',
               n(s['distance']), n(s['leg'])),
+      ],
+    );
+  }
+}
+
+/// A customer, lead, deal ... with a location, for planning a trip.
+class VisitPlace {
+  final String type;
+  final String name;
+  final String title;
+  final double lat;
+  final double lon;
+  final double? km; // straight-line distance from the phone
+  const VisitPlace(this.type, this.name, this.title, this.lat, this.lon, this.km);
+
+  factory VisitPlace.fromJson(Map<String, dynamic> j) => VisitPlace(
+        '${j['type']}',
+        '${j['name']}',
+        '${j['title'] ?? j['name']}',
+        double.tryParse('${j['lat']}') ?? 0,
+        double.tryParse('${j['lon']}') ?? 0,
+        j['km'] == null ? null : double.tryParse('${j['km']}'),
+      );
+
+  String get key => '$type/$name';
+}
+
+/// One line of the activity log.
+class LogItem {
+  final DateTime at;
+  final String kind; // in, out, trip, stop, gps_off, visit
+  final String title;
+  final String detail;
+  final double? lat;
+  final double? lon;
+  const LogItem(this.at, this.kind, this.title, this.detail, this.lat, this.lon);
+}
+
+/// A day of activity: totals and the timeline.
+class DayLog {
+  final double distanceKm;
+  final int movingMinutes;
+  final int stoppedMinutes;
+  final int trips;
+  final int stops;
+  final int gpsOff;
+  final int gpsOffMinutes;
+  final List<LogItem> items;
+  const DayLog(this.distanceKm, this.movingMinutes, this.stoppedMinutes, this.trips, this.stops, this.gpsOff,
+      this.gpsOffMinutes, this.items);
+
+  factory DayLog.fromJson(Map<String, dynamic> j) {
+    final s = (j['summary'] as Map<String, dynamic>?) ?? const {};
+    int i(dynamic v) => (double.tryParse('$v') ?? 0).round();
+    double? d(dynamic v) => v == null ? null : double.tryParse('$v');
+    return DayLog(
+      d(s['distance_km']) ?? 0,
+      i(s['moving_minutes']),
+      i(s['stopped_minutes']),
+      i(s['trips']),
+      i(s['stops']),
+      i(s['gps_off']),
+      i(s['gps_off_minutes']),
+      [
+        for (final it in (j['items'] as List? ?? const []))
+          if (DateTime.tryParse('${it['at']}'.replaceFirst(' ', 'T')) != null)
+            LogItem(DateTime.parse('${it['at']}'.replaceFirst(' ', 'T')), '${it['kind']}', '${it['title'] ?? ''}',
+                '${it['detail'] ?? ''}', d(it['lat']), d(it['lon'])),
       ],
     );
   }

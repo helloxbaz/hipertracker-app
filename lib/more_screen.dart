@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'app_theme.dart';
 import 'erp_service.dart';
+import 'log_screen.dart';
 import 'password_service.dart';
 import 'preferences.dart';
 import 'settings_screen.dart';
@@ -96,6 +97,13 @@ class _MoreScreenState extends State<MoreScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        if (connected)
+          HsTile(
+            icon: Icons.history,
+            title: 'Activity log',
+            subtitle: 'Trips, stops, check ins, location off',
+            onTap: () => _open(const LogScreen()),
+          ),
         HsTile(
           icon: Icons.tune,
           title: 'Tracking settings',

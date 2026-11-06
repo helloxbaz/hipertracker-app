@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
+import 'plan_trip_screen.dart';
 import 'stop_actions.dart';
 import 'trip_screen.dart';
 
@@ -47,8 +48,22 @@ class _TodayTripCardState extends State<TodayTripCard> {
 
   @override
   Widget build(BuildContext context) {
-    if (_plans.isEmpty) return const SizedBox.shrink();
-    return Column(children: [for (final p in _plans) _card(p)]);
+    if (!ErpService.isConnected) return const SizedBox.shrink();
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      for (final p in _plans) _card(p),
+      Padding(
+        padding: const EdgeInsets.only(top: 12),
+        child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          onPressed: () async {
+            await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const PlanTripScreen()));
+            _load();
+          },
+          icon: const Icon(Icons.add_road),
+          label: Text(_plans.isEmpty ? 'Plan my trip' : 'Plan another trip'),
+        ),
+      ),
+    ]);
   }
 
   Widget _card(TripPlan plan) {
