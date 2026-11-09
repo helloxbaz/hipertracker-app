@@ -14,7 +14,7 @@ import 'package:flutter/services.dart';
 class UpdateService {
   static const String repo = String.fromEnvironment(
     'UPDATE_REPO',
-    defaultValue: 'hipersignerp-dev/Hipersign-traccar-client',
+    defaultValue: 'helloxbaz/hipertracker-app',
   );
   static const int buildNumber = int.fromEnvironment('BUILD_NUMBER', defaultValue: 0);
   static const String apkName = 'HiperTracker.apk';

@@ -9,17 +9,17 @@
 ## 📲 Install on an Android phone
 
 <p align="center">
-  <a href="https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk">
+  <a href="https://github.com/helloxbaz/hipertracker-app/releases/latest/download/HiperTracker.apk">
     <img src="https://img.shields.io/badge/Download-HiperTracker%20APK-0b5fff?style=for-the-badge&logo=android&logoColor=white" alt="Download HiperTracker APK" height="56">
   </a>
 </p>
 
 <p align="center">
   Or scan with the phone's camera:<br><br>
-  <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=https%3A%2F%2Fgithub.com%2Fhipersignerp-dev%2FHipersign-traccar-client%2Freleases%2Flatest%2Fdownload%2FHiperTracker.apk" alt="QR code to download HiperTracker" width="240">
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=https%3A%2F%2Fgithub.com%2Fhelloxbaz%2Fhipertracker-app%2Freleases%2Flatest%2Fdownload%2FHiperTracker.apk" alt="QR code to download HiperTracker" width="240">
 </p>
 
-**Direct link:** https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk
+**Direct link:** https://github.com/helloxbaz/hipertracker-app/releases/latest/download/HiperTracker.apk
 
 1. Open the link (or tap the button) on the phone and download **HiperTracker.apk**.
 2. Open the downloaded file. If Android asks, allow your browser to **install unknown apps**, then tap **Install**.
@@ -30,7 +30,7 @@
 
 ## 🔄 Updates
 
-Every change pushed to this repository builds a new version automatically and publishes it under [Releases](https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases).
+Every change pushed to this repository builds a new version automatically and publishes it under [Releases](https://github.com/helloxbaz/hipertracker-app/releases).
 The app checks for new versions when it opens and shows **"New version available"** with an **Update** button that downloads and installs it.
 Workers can also check any time with the update icon at the top of the app.
 

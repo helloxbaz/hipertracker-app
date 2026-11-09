@@ -2,7 +2,7 @@ name: Build HiperTracker APK
 
 # Every push to main builds a signed APK and publishes it as a GitHub release.
 # - The install link in the README always points at the newest one:
-#   https://github.com/hipersignerp-dev/Hipersign-traccar-client/releases/latest/download/HiperTracker.apk
+#   https://github.com/helloxbaz/hipertracker-app/releases/latest/download/HiperTracker.apk
 # - Installed apps see the new release and offer an in-app update (lib/update_service.dart).
 #
 # Needs these repository secrets (Settings -> Secrets and variables -> Actions), all from the
@@ -63,7 +63,7 @@ jobs:
         id: version
         run: |
           # build numbers start above the original Traccar app's so Android always treats ours as newer
-          BUILD=$((1000 + ${{ github.run_number }}))
+          BUILD=$((2000 + ${{ github.run_number }}))  # 2000+: above the builds made on the old account (up to 1023)
           NAME=$(grep -E '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([^+]+).*/\1/')
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
