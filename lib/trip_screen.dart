@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gm;
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -12,6 +14,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
+import 'nav_icons.dart';
 import 'stop_actions.dart';
 import 'voice_guide.dart';
 
@@ -27,10 +30,21 @@ class TripScreen extends StatefulWidget {
 }
 
 class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateMixin {
-  static const _reachedWithin = 120.0; // metres: the ERP uses 150, the app says "Reached" a little before
-  static const _offRoute = 80.0; // metres from the route before it is worked out again
+  static const _offRoute = 60.0; // metres from the route before it is worked out again
+  // Google's map (tilted 3D, Google's roads and look) when the app was built with a Maps key,
+  // else the OpenStreetMap one
+  static const _google = bool.fromEnvironment('GMAPS');
+  static const _tiltDeg = 55.0;
+
+  /// How close counts as "arrived": at the stop, not across the road (looser when GPS is poor).
+  double _arriveWithin(Position p) => (p.accuracy + 12).clamp(25.0, 50.0).toDouble();
 
   final _map = MapController();
+  gm.GoogleMapController? _gmap;
+  double _bearing = 0; // Google camera bearing, degrees
+  DateTime _lastCam = DateTime.fromMillisecondsSinceEpoch(0);
+  Offset? _downAt; // finger down on the map (moving it stops following)
+  DateTime _lastFixAt = DateTime.fromMillisecondsSinceEpoch(0);
   bool _mapReady = false;
   bool _follow = true;
   bool _satellite = false;
@@ -152,9 +166,15 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (mounted) setState(() => _gpsProblem = 'Allow location for HiperTracker to follow the route.');
         return;
       }
-      _gps = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 5),
-      ).listen(_onPosition, onError: (_) {
+      // a fix every second, like a car navigator (no distance filter, so slow traffic still moves the arrow)
+      final settings = defaultTargetPlatform == TargetPlatform.android
+          ? AndroidSettings(
+              accuracy: LocationAccuracy.bestForNavigation,
+              distanceFilter: 0,
+              intervalDuration: const Duration(milliseconds: 1000),
+            )
+          : const LocationSettings(accuracy: LocationAccuracy.bestForNavigation, distanceFilter: 0);
+      _gps = Geolocator.getPositionStream(locationSettings: settings).listen(_onPosition, onError: (_) {
         if (mounted) setState(() => _gpsProblem = 'Waiting for GPS…');
       });
     } catch (_) {
@@ -171,7 +191,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     // reached the petrol pump? then on to the next stop
     final pump = _detour;
     if (pump != null && p.accuracy <= 60 &&
-        Geolocator.distanceBetween(p.latitude, p.longitude, pump.lat, pump.lon) <= 60) {
+        Geolocator.distanceBetween(p.latitude, p.longitude, pump.lat, pump.lon) <= _arriveWithin(p) + 10) {
       _detour = null;
       HapticFeedback.heavyImpact();
       _showBanner('Reached ${pump.name}');
@@ -184,14 +204,16 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final rem = _remaining();
     if (rem.isNotEmpty && p.accuracy <= 60) {
       final next = rem.first;
-      if (Geolocator.distanceBetween(p.latitude, p.longitude, next.lat!, next.lon!) <= _reachedWithin) {
+      if (Geolocator.distanceBetween(p.latitude, p.longitude, next.lat!, next.lon!) <= _arriveWithin(p)) {
+        final side = _sideOf(next.lat!, next.lon!);
         _reachedHere.add(next.idx);
         HapticFeedback.heavyImpact();
         _showBanner('Reached ${next.name}');
         final after = _remaining().firstOrNull;
+        final here = 'You have arrived at ${next.name}${side == null ? '' : ', on your $side'}.';
         _voice.say(after == null
-            ? 'You have arrived at ${next.name}. This was your last stop. All stops are complete.'
-            : 'You have arrived at ${next.name}. Your next stop is ${after.name}.');
+            ? '$here This was your last stop. All stops are complete.'
+            : '$here Your next stop is ${after.name}.');
         _saidAllDone = after == null;
         _reroute();
         unawaited(_load());
@@ -245,13 +267,30 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     }
     heading = (heading % 360 + 360) % 360;
 
+    // keep up with the car: aim where it will be when the next fix comes, on the road of the route
+    var target = here;
+    if (_moving && speed > 1.4) {
+      target = _ahead(here, heading, math.min(speed * 0.9, 25));
+    }
+    final snap = _snap(target);
+    if (snap != null) {
+      target = snap.$1;
+      if (_moving) heading = snap.$2;
+    }
+    heading = (heading % 360 + 360) % 360;
+
     // zoom by speed, like a car navigator
     final kmh = speed * 3.6;
     final targetZoom = !_moving ? 17.2 : kmh < 15 ? 17.5 : kmh < 35 ? 16.8 : kmh < 60 ? 16.1 : 15.4;
     _zoom = _zoom + (targetZoom - _zoom) * 0.35;
 
-    _glideFrom = _shown ?? here;
-    _glideTo = here;
+    _glideFrom = _shown ?? target;
+    _glideTo = target;
+    // glide over the time between fixes, so the arrow never stops between them
+    final now = DateTime.now();
+    final gap = now.difference(_lastFixAt).inMilliseconds;
+    _lastFixAt = now;
+    _glide.duration = Duration(milliseconds: gap.clamp(500, 1500));
     _headingFrom = _heading;
     // turn the short way round
     var delta = heading - _headingFrom;
@@ -261,26 +300,134 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     _glide.forward(from: 0);
   }
 
+  /// [d] metres from [p] towards [bearing].
+  LatLng _ahead(LatLng p, double bearing, double d) {
+    final b = bearing * math.pi / 180;
+    final dLat = d * math.cos(b) / 111320.0;
+    final dLon = d * math.sin(b) / (111320.0 * math.cos(p.latitude * math.pi / 180));
+    return LatLng(p.latitude + dLat, p.longitude + dLon);
+  }
+
+  /// [p] put onto the route's road when it's within 20 m of it: (point on the road, road direction).
+  (LatLng, double)? _snap(LatLng p) {
+    final line = _route?.line;
+    if (line == null || line.length < 2) return null;
+    final k = math.cos(p.latitude * math.pi / 180) * 111320.0;
+    const m = 111320.0;
+    (LatLng, double)? best;
+    var bestD = 20.0;
+    final from = math.max(0, _userAt - 8), to = math.min(line.length - 1, _userAt + 60);
+    for (var i = from; i < to; i++) {
+      final ax = line[i][1] * k, ay = line[i][0] * m, bx = line[i + 1][1] * k, by = line[i + 1][0] * m;
+      final px = p.longitude * k, py = p.latitude * m;
+      final dx = bx - ax, dy = by - ay;
+      final len = dx * dx + dy * dy;
+      if (len < 0.01) continue;
+      final t = (((px - ax) * dx + (py - ay) * dy) / len).clamp(0.0, 1.0);
+      final qx = ax + dx * t, qy = ay + dy * t;
+      final d = math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy));
+      if (d < bestD) {
+        bestD = d;
+        final brg = (math.atan2(dx, dy) * 180 / math.pi + 360) % 360;
+        best = (LatLng(qy / m, qx / k), brg);
+      }
+    }
+    return best;
+  }
+
+  /// Which side of the road the stop is, going along the route: "left", "right" or null (ahead).
+  String? _sideOf(double lat, double lon) {
+    final line = _route?.line;
+    if (line == null || line.length < 2) return null;
+    final a = line[line.length - 2], b = line.last;
+    final k = math.cos(lat * math.pi / 180);
+    final dx = (b[1] - a[1]) * k, dy = b[0] - a[0];
+    final ex = (lon - b[1]) * k, ey = lat - b[0];
+    if (math.sqrt(ex * ex + ey * ey) * 111320 < 6) return null;
+    final cross = dx * ey - dy * ex;
+    return cross > 0 ? 'left' : 'right';
+  }
+
   void _onGlide() {
     final a = _glideFrom, b = _glideTo;
     if (a == null || b == null) return;
-    final t = Curves.easeInOut.transform(_glide.value);
+    final t = _glide.value; // straight through: no slowing down at each fix
     _shown = LatLng(a.latitude + (b.latitude - a.latitude) * t, a.longitude + (b.longitude - a.longitude) * t);
     _heading = _headingFrom + (_headingTo - _headingFrom) * t;
     if (_follow && _mapReady) {
-      final rotation = _headingUp ? (_moving ? -_heading : _map.camera.rotation) : 0.0;
-      _map.rotate(rotation);
-      _map.move(_shown!, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+      if (_google) {
+        final now = DateTime.now();
+        if (now.difference(_lastCam).inMilliseconds >= 25) {
+          _lastCam = now;
+          if (_headingUp && _moving) _bearing = _heading;
+          if (!_headingUp) _bearing = 0;
+          _gmap?.moveCamera(gm.CameraUpdate.newCameraPosition(gm.CameraPosition(
+            target: gm.LatLng(_shown!.latitude, _shown!.longitude),
+            zoom: _zoom,
+            bearing: _bearing,
+            tilt: _headingUp ? _tiltDeg : 0,
+          )));
+        }
+      } else {
+        final rotation = _headingUp ? (_moving ? -_heading : _map.camera.rotation) : 0.0;
+        _map.rotate(rotation);
+        _map.move(_shown!, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+      }
     }
     if (mounted) setState(() {});
+  }
+
+  /// Degrees the map is turned (for the compass button).
+  double _mapTurn() => _google ? -_bearing : (_mapReady ? _map.camera.rotation : 0);
+
+  void _camTo(LatLng at, double zoom) {
+    if (_google) {
+      _gmap?.animateCamera(gm.CameraUpdate.newCameraPosition(
+          gm.CameraPosition(target: gm.LatLng(at.latitude, at.longitude), zoom: zoom, bearing: _bearing)));
+    } else {
+      _map.move(at, zoom);
+    }
+  }
+
+  void _camFit(List<LatLng> pts, EdgeInsets pad) {
+    if (pts.isEmpty) return;
+    if (pts.length == 1) {
+      _camTo(pts.first, 15);
+      return;
+    }
+    if (_google) {
+      var s = pts.first.latitude, n = s, w = pts.first.longitude, e = w;
+      for (final p in pts) {
+        s = math.min(s, p.latitude);
+        n = math.max(n, p.latitude);
+        w = math.min(w, p.longitude);
+        e = math.max(e, p.longitude);
+      }
+      _bearing = 0;
+      _gmap?.animateCamera(gm.CameraUpdate.newLatLngBounds(
+          gm.LatLngBounds(southwest: gm.LatLng(s, w), northeast: gm.LatLng(n, e)), 70));
+    } else {
+      _map.rotate(0);
+      _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: pad));
+    }
   }
 
   void _recenter() {
     setState(() => _follow = true);
     final at = _shown ?? (_pos != null ? LatLng(_pos!.latitude, _pos!.longitude) : null);
     if (at != null && _mapReady) {
-      _map.rotate(_headingUp && _moving ? -_heading : (_headingUp ? _map.camera.rotation : 0));
-      _map.move(at, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+      if (_google) {
+        if (_headingUp) _bearing = _heading;
+        _gmap?.animateCamera(gm.CameraUpdate.newCameraPosition(gm.CameraPosition(
+          target: gm.LatLng(at.latitude, at.longitude),
+          zoom: _zoom,
+          bearing: _headingUp ? _bearing : 0,
+          tilt: _headingUp ? _tiltDeg : 0,
+        )));
+      } else {
+        _map.rotate(_headingUp && _moving ? -_heading : (_headingUp ? _map.camera.rotation : 0));
+        _map.move(at, _zoom, offset: Offset(0, _headingUp ? _screenH * 0.2 : 0));
+      }
     }
   }
 
@@ -547,7 +694,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   onTap: () {
                     Navigator.pop(ctx);
                     setState(() => _follow = false);
-                    if (_mapReady) _map.move(LatLng(f.lat, f.lon), 16);
+                    if (_mapReady) _camTo(LatLng(f.lat, f.lon), 16);
                   },
                 );
               },
@@ -597,11 +744,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       for (final s in _plan?.stops ?? const <PlanStop>[]) if (s.hasLocation) LatLng(s.lat!, s.lon!),
       if (_pos != null) LatLng(_pos!.latitude, _pos!.longitude),
     ];
-    if (pts.length > 1) {
-      _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.fromLTRB(40, 160, 40, 260)));
-    } else if (pts.length == 1) {
-      _map.move(pts.first, 15);
-    }
+    _camFit(pts, const EdgeInsets.fromLTRB(40, 160, 40, 260));
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -677,7 +820,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   /// Where the route ends: the petrol pump being driven to, or the next stop.
   String? _destName() => _detour?.name ?? (_routedStops.isNotEmpty ? _routedStops.first.name : null);
 
-  String _arriveName(RouteStep s) => _destName() ?? 'Your stop';
+  String _arriveName(RouteStep s) {
+    final n = _destName() ?? 'Your stop';
+    final stop = _detour == null && _routedStops.isNotEmpty ? _routedStops.first : null;
+    final side = stop == null ? null : _sideOf(stop.lat!, stop.lon!);
+    return side == null ? n : '$n, on your $side,';
+  }
 
   String _spokenText(RouteStep s) {
     if (s.type == 'arrive') {
@@ -775,7 +923,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   : Padding(padding: const EdgeInsets.all(24), child: Text(_loadError!, textAlign: TextAlign.center)),
             )
           : Stack(children: [
-              _mapView(plan),
+              Positioned.fill(child: _mapView(plan)),
+              if (_google && _follow && _shown != null) _arrowOverlay(),
               Positioned(left: 0, right: 0, top: 0, child: SafeArea(child: _topBar(plan))),
               Positioned(left: 0, right: 0, bottom: 0, child: _bottomPanel(plan)),
               AnimatedPositioned(
@@ -796,11 +945,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                     tip: _headingUp ? 'North up' : 'Direction of travel up',
                     onTap: () {
                       setState(() => _headingUp = !_headingUp);
-                      if (!_headingUp && _mapReady) _map.rotate(0);
+                      if (!_headingUp && _mapReady && !_google) _map.rotate(0);
                       _recenter();
                     },
                     child: Transform.rotate(
-                      angle: (_mapReady ? _map.camera.rotation : 0) * math.pi / 180,
+                      angle: _mapTurn() * math.pi / 180,
                       child: const Icon(Icons.navigation, color: Color(0xFFD93025), size: 28),
                     ),
                   ),
@@ -890,11 +1039,240 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       _fitAll();
       return;
     }
-    _map.rotate(0);
-    _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.fromLTRB(50, 220, 90, 200)));
+    _camFit(pts, const EdgeInsets.fromLTRB(50, 220, 90, 200));
   }
 
-  Widget _mapView(TripPlan plan) {
+  Widget _mapView(TripPlan plan) => _google ? _googleMap(plan) : _osmMap(plan);
+
+  bool _night() {
+    final h = DateTime.now().hour;
+    return h >= 18 || h < 6 || MediaQuery.of(context).platformBrightness == Brightness.dark;
+  }
+
+  /// Top / bottom map padding: following, the camera centre (where the arrow is) sits low on the screen.
+  (double, double) _gPad() {
+    final bottom = 120 + MediaQuery.of(context).padding.bottom;
+    final top = _follow && _headingUp ? _screenH * 0.5 : 170.0;
+    return (top, bottom);
+  }
+
+  String _gKey = '';
+  Set<gm.Polyline> _gLines = const {};
+  Set<gm.Marker> _gMarks = const {};
+
+  void _pickAlternative(int k) {
+    if (_route == null || k >= _alts.length) return;
+    setState(() {
+      final pick = _alts[k];
+      _use(pick, [_route!, for (var j = 0; j < _alts.length; j++) if (j != k) _alts[j]]);
+    });
+    _voice.say('Route changed.');
+  }
+
+  Widget _googleMap(TripPlan plan) {
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final night = _night();
+    final stops = plan.stops.where((s) => s.hasLocation).toList();
+    final next = _remaining().firstOrNull;
+    void redraw() {
+      if (mounted) setState(() => _gKey = '');
+    }
+
+    final key = [
+      identityHashCode(_route), _userAt, identityHashCode(_alts), identityHashCode(_pumps), identityHashCode(_detour),
+      _track.length, night, _follow, for (final s in stops) _status(s), next?.idx,
+    ].join('|');
+    if (key != _gKey) {
+      _gKey = key;
+      int px(double w) => (w * dpr).round();
+      final r = _route;
+      final mainColor = night ? const Color(0xFF26C6F9) : const Color(0xFF1A73E8);
+      final mainEdge = night ? const Color(0xFF0B4F6C) : const Color(0xFF0D47A1);
+      final altColor = night ? const Color(0xFF5B7896) : const Color(0xFFA9C2E8);
+      gm.LatLng ll(List<double> p) => gm.LatLng(p[0], p[1]);
+      _gLines = {
+        if (_track.length > 1)
+          gm.Polyline(
+            polylineId: const gm.PolylineId('track'),
+            points: [for (final p in _track) ll(p)],
+            color: const Color(0x99607D8B),
+            width: px(4),
+            zIndex: 1,
+          ),
+        for (var k = 0; k < _alts.length; k++)
+          if (_alts[k].line.length > 1)
+            gm.Polyline(
+              polylineId: gm.PolylineId('alt$k'),
+              points: [for (final p in _alts[k].line) ll(p)],
+              color: altColor,
+              width: px(7),
+              zIndex: 2,
+              jointType: gm.JointType.round,
+              startCap: gm.Cap.roundCap,
+              endCap: gm.Cap.roundCap,
+              consumeTapEvents: true,
+              onTap: () => _pickAlternative(k),
+            ),
+        if (r != null && r.line.length > 1) ...[
+          gm.Polyline(
+            polylineId: const gm.PolylineId('edge'),
+            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            color: mainEdge,
+            width: px(11),
+            zIndex: 3,
+            jointType: gm.JointType.round,
+            startCap: gm.Cap.roundCap,
+            endCap: gm.Cap.roundCap,
+          ),
+          gm.Polyline(
+            polylineId: const gm.PolylineId('route'),
+            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            color: mainColor,
+            width: px(8),
+            zIndex: 4,
+            jointType: gm.JointType.round,
+            startCap: gm.Cap.roundCap,
+            endCap: gm.Cap.roundCap,
+          ),
+          for (var i = 0; i < r.traffic.length; i++)
+            if (r.traffic[i][1] > _userAt && r.traffic[i][1] < r.line.length)
+              gm.Polyline(
+                polylineId: gm.PolylineId('traffic$i'),
+                points: [
+                  for (final p in r.line.sublist(math.max(r.traffic[i][0], math.max(0, _userAt - 1)), r.traffic[i][1] + 1))
+                    ll(p),
+                ],
+                color: r.traffic[i][2] == 2 ? const Color(0xFFE53935) : const Color(0xFFF9A825),
+                width: px(8),
+                zIndex: 5,
+                jointType: gm.JointType.round,
+              ),
+        ],
+      };
+      final marks = <gm.Marker>{};
+      for (var k = 0; k < _alts.length; k++) {
+        if (k >= _altLabelAt.length || _altLabelAt[k] == null || r == null) continue;
+        final text = _altLabel(_alts[k]);
+        final icon = NavIcons.get('label-$text-$night', dpr, (d) => NavIcons.label(d, text, dark: night), redraw);
+        if (icon == null) continue;
+        marks.add(gm.Marker(
+          markerId: gm.MarkerId('altlabel$k'),
+          position: gm.LatLng(_altLabelAt[k]!.latitude, _altLabelAt[k]!.longitude),
+          icon: icon,
+          anchor: const Offset(0.5, 0.5),
+          consumeTapEvents: true,
+          onTap: () => _pickAlternative(k),
+        ));
+      }
+      for (final f in {..._pumps, if (_detour != null) _detour!}) {
+        final going = identical(f, _detour);
+        final icon = NavIcons.get('pump-$going', dpr, (d) => NavIcons.pump(d, going: going), redraw);
+        if (icon == null) continue;
+        marks.add(gm.Marker(
+          markerId: gm.MarkerId('pump-${f.lat},${f.lon}'),
+          position: gm.LatLng(f.lat, f.lon),
+          icon: icon,
+          anchor: const Offset(0.5, 0.5),
+          consumeTapEvents: true,
+          onTap: _showPumps,
+        ));
+      }
+      for (final s in stops) {
+        final n = plan.stops.indexOf(s) + 1;
+        final st = _status(s);
+        final isNext = identical(s, next);
+        final color = isNext ? const Color(0xFF1F2A44) : (st == 'Pending' ? HsColors.blue : (stopColors[st] ?? HsColors.blue));
+        final name = isNext ? s.name : null;
+        final icon = NavIcons.get('stop-$n-$st-${name ?? ''}', dpr,
+            (d) => NavIcons.stop(d, number: n, color: color, name: name), redraw);
+        if (icon == null) continue;
+        marks.add(gm.Marker(
+          markerId: gm.MarkerId('stop${s.idx}'),
+          position: gm.LatLng(s.lat!, s.lon!),
+          icon: icon,
+          anchor: Offset(0.5, isNext ? 0.25 : 0.5),
+          consumeTapEvents: true,
+          onTap: () => showStopSheet(context, s, n),
+        ));
+      }
+      _gMarks = marks;
+    }
+    // the arrow: drawn over the map while following (never lags), a map marker otherwise
+    final arrowIcon = NavIcons.get('arrow', dpr, NavIcons.arrow, redraw);
+    final markers = {
+      ..._gMarks,
+      if (!_follow && _shown != null && arrowIcon != null)
+        gm.Marker(
+          markerId: const gm.MarkerId('me'),
+          position: gm.LatLng(_shown!.latitude, _shown!.longitude),
+          icon: arrowIcon,
+          flat: true,
+          rotation: _heading,
+          anchor: const Offset(0.5, 0.5),
+        ),
+    };
+    final (padTop, padBottom) = _gPad();
+    final start = _pos != null
+        ? gm.LatLng(_pos!.latitude, _pos!.longitude)
+        : (stops.isNotEmpty ? gm.LatLng(stops.first.lat!, stops.first.lon!) : const gm.LatLng(10.55, 76.3));
+    return Listener(
+      onPointerDown: (e) => _downAt = e.position,
+      onPointerMove: (e) {
+        if (_follow && _downAt != null && (e.position - _downAt!).distance > 14) setState(() => _follow = false);
+      },
+      onPointerUp: (_) => _downAt = null,
+      child: gm.GoogleMap(
+        initialCameraPosition: gm.CameraPosition(target: start, zoom: 14),
+        onMapCreated: (c) {
+          _gmap = c;
+          _mapReady = true;
+          _fitAll();
+        },
+        style: night && !_satellite ? NavIcons.nightStyle : null,
+        mapType: _satellite ? gm.MapType.hybrid : gm.MapType.normal,
+        padding: EdgeInsets.only(top: padTop, bottom: padBottom),
+        polylines: _gLines,
+        markers: markers,
+        circles: {
+          if (_shown != null && !_moving && _pos != null && _pos!.accuracy > 8)
+            gm.Circle(
+              circleId: const gm.CircleId('accuracy'),
+              center: gm.LatLng(_shown!.latitude, _shown!.longitude),
+              radius: math.min(_pos!.accuracy, 150),
+              fillColor: const Color(0x261783C1),
+              strokeColor: const Color(0x661783C1),
+              strokeWidth: 1,
+            ),
+        },
+        onCameraMove: (c) => _bearing = c.bearing,
+        buildingsEnabled: true,
+        compassEnabled: false,
+        mapToolbarEnabled: false,
+        myLocationButtonEnabled: false,
+        myLocationEnabled: false,
+        zoomControlsEnabled: false,
+        trafficEnabled: false,
+        indoorViewEnabled: false,
+      ),
+    );
+  }
+
+  /// Where the Google camera keeps the arrow on screen while following.
+  Widget _arrowOverlay() {
+    final (padTop, padBottom) = _gPad();
+    final y = padTop + (_screenH - padTop - padBottom) / 2;
+    final turn = _headingUp ? _heading - _bearing : _heading;
+    return Positioned(
+      left: 0,
+      right: 0,
+      top: y - 32,
+      child: IgnorePointer(
+        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.85 : 0)),
+      ),
+    );
+  }
+
+  Widget _osmMap(TripPlan plan) {
     final stops = plan.stops.where((s) => s.hasLocation).toList();
     final next = _remaining().firstOrNull;
     final start = _pos != null
@@ -1347,7 +1725,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                             showStopSheet(context, s, i + 1);
                             if (s.hasLocation && _mapReady) {
                               setState(() => _follow = false);
-                              _map.move(LatLng(s.lat!, s.lon!), 16);
+                              _camTo(LatLng(s.lat!, s.lon!), 16);
                             }
                           },
                           child: Container(

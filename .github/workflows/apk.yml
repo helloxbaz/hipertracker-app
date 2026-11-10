@@ -8,6 +8,8 @@ name: Build HiperTracker APK
 # Needs these repository secrets (Settings -> Secrets and variables -> Actions), all from the
 # same signing key every time, or phones will refuse to update:
 #   HT_KEYSTORE_BASE64, HT_KEYSTORE_PASSWORD, HT_KEY_ALIAS, HT_KEY_PASSWORD
+# Optional: MAPS_API_KEY, a Google key with "Maps SDK for Android" (restricted to package org.traccar.client
+# and this signing key's SHA-1). With it the trip screen uses Google's tilted 3D map; without, OpenStreetMap.
 
 on:
   push:
@@ -74,12 +76,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build APK
+        env:
+          MAPS_API_KEY: ${{ secrets.MAPS_API_KEY }}
         run: |
           flutter pub get
+          GMAPS=false
+          if [ -n "$MAPS_API_KEY" ]; then GMAPS=true; else echo "::warning::No MAPS_API_KEY secret: the trip screen uses OpenStreetMap"; fi
           flutter build apk --release \
             --build-number=${{ steps.version.outputs.build }} \
             --dart-define=BUILD_NUMBER=${{ steps.version.outputs.build }} \
-            --dart-define=UPDATE_REPO=${{ github.repository }}
+            --dart-define=UPDATE_REPO=${{ github.repository }} \
+            --dart-define=GMAPS=$GMAPS
           cp build/app/outputs/flutter-apk/app-release.apk HiperTracker.apk
 
       - name: Publish release
