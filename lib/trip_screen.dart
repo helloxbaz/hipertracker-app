@@ -175,8 +175,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         _showBanner('Reached ${next.name}');
         final after = _remaining().firstOrNull;
         _voice.say(after == null
-            ? 'You have reached ${next.name}. That was the last stop. All stops are done, great work!'
-            : 'You have reached ${next.name}. Next stop, ${after.name}.');
+            ? 'You have arrived at ${next.name}. This was your last stop. All stops are complete.'
+            : 'You have arrived at ${next.name}. Your next stop is ${after.name}.');
         _saidAllDone = after == null;
         _reroute();
         unawaited(_load());
@@ -358,7 +358,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       if (d <= 30) {
         final others = [main, for (var j = 0; j < _alts.length; j++) if (j != k) _alts[j]];
         _use(a, others);
-        _voice.say('Following the other route.');
+        _voice.say('Following the alternate route.');
         return true;
       }
     }
@@ -395,10 +395,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       if (!_greeted) {
         _greeted = true;
         final to = r.legs.isNotEmpty ? r.legs.first[0].toDouble() : r.distance.toDouble();
-        _voice.say("Let's go. Your ${_plan!.done == 0 ? 'first' : 'next'} stop is ${stops.first.name}, "
-            '${VoiceGuide.distance(to)} away.');
+        _voice.say('Starting route to ${stops.first.name}. ${VoiceGuide.distance(to)} to go.');
       } else if (_offRouteReroute) {
-        _voice.say('Route updated.');
+        _voice.say('Rerouting.');
       }
       _offRouteReroute = false;
       if (_follow && _mapReady && _pos == null) _fitAll();
@@ -491,7 +490,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     if (_remaining().isEmpty) {
       if (!_saidAllDone) {
         _saidAllDone = true;
-        _voice.say('All stops are done. Great work!');
+        _voice.say('All stops are complete.');
       }
       return;
     }
@@ -506,7 +505,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       final text = _spokenText(s);
       if (d <= 40 && _spokenStage < 3) {
         _spokenStage = 3;
-        _voice.say(s.type == 'arrive' ? text : '$text now.');
+        _voice.say(s.type == 'arrive'
+            ? '${_arriveName(s)} is ahead.'
+            : text.isEmpty
+                ? ''
+                : '${text[0].toUpperCase()}${text.substring(1)}.');
       } else if (d <= 250 && d > 40 && _spokenStage < 2) {
         _spokenStage = 2;
         _voice.say('In ${VoiceGuide.distance(d)}, $text.');
@@ -515,16 +518,18 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         _voice.say('In ${VoiceGuide.distance(d)}, $text.');
       } else if (d > 1500 && _spokenStage < 1) {
         _spokenStage = 1;
-        _voice.say('Continue for ${VoiceGuide.distance(d)}.');
+        _voice.say('Continue straight for ${VoiceGuide.distance(d)}.');
       }
       return;
     }
   }
 
+  String _arriveName(RouteStep s) => s.leg < _routedStops.length ? _routedStops[s.leg].name : 'Your stop';
+
   String _spokenText(RouteStep s) {
     if (s.type == 'arrive') {
       final stop = s.leg < _routedStops.length ? _routedStops[s.leg].name : null;
-      return stop == null ? 'you will arrive at your stop' : 'you will arrive at $stop';
+      return stop == null ? 'your stop is ahead' : '$stop is ahead';
     }
     final t = s.text;
     return t.isEmpty ? t : t[0].toLowerCase() + t.substring(1);
@@ -646,7 +651,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                     tip: _voice.enabled ? 'Mute voice' : 'Voice on',
                     onTap: () {
                       setState(() => _voice.enabled = !_voice.enabled);
-                      if (_voice.enabled) _voice.say('Voice directions on.');
+                      if (_voice.enabled) _voice.say('Voice guidance on.');
                     },
                   ),
                   const SizedBox(height: 12),

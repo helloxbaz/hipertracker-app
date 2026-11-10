@@ -11,6 +11,7 @@ import 'preferences.dart';
 import 'settings_screen.dart';
 import 'status_screen.dart';
 import 'update_service.dart';
+import 'voice_screen.dart';
 
 /// More tab, laid out like the Hipersign mobile app: profile card, then settings rows and sign out.
 class MoreScreen extends StatefulWidget {
@@ -135,6 +136,12 @@ class _MoreScreenState extends State<MoreScreen> {
             subtitle: 'Trips, stops, check ins, location off',
             onTap: () => _open(const LogScreen()),
           ),
+        HsTile(
+          icon: Icons.record_voice_over_outlined,
+          title: 'Navigation voice',
+          subtitle: 'Choose the voice for trip directions',
+          onTap: () => _open(const VoiceScreen()),
+        ),
         HsTile(
           icon: Icons.tune,
           title: 'Tracking settings',

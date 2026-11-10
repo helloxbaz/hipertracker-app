@@ -38,6 +38,10 @@ class Preferences {
   static const String trackingOnly = 'tracking_only';
   // trip screen: speak directions (on unless turned off)
   static const String tripVoice = 'trip_voice';
+  // trip screen: the chosen voice and how fast it speaks
+  static const String tripVoiceName = 'trip_voice_name';
+  static const String tripVoiceLocale = 'trip_voice_locale';
+  static const String tripVoiceRate = 'trip_voice_rate';
 
   static Future<void> init() async {
     _initFuture ??= _createInstance();
@@ -53,7 +57,7 @@ class Preferences {
         allowList: {
           id, url, accuracy, distance, interval, angle, heartbeat, buffer, wakelock, stopDetection, preferPlatformProviders, password,
           erpUrl, erpUser, erpSid, erpEmployee, erpEmployeeName, onDuty, dutySince, dutyMode, alarmInterval, escalateAfter,
-          requireLocation, trackingOnly, tripVoice,
+          requireLocation, trackingOnly, tripVoice, tripVoiceName, tripVoiceLocale, tripVoiceRate,
         },
       ),
     );
