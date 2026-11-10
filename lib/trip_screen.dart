@@ -270,7 +270,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     // keep up with the car: aim where it will be when the next fix comes, on the road of the route
     var target = here;
     if (_moving && speed > 1.4) {
-      target = _ahead(here, heading, math.min(speed * 0.9, 25));
+      target = _offsetBy(here, heading, math.min(speed * 0.9, 25));
     }
     final snap = _snap(target);
     if (snap != null) {
@@ -301,7 +301,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   }
 
   /// [d] metres from [p] towards [bearing].
-  LatLng _ahead(LatLng p, double bearing, double d) {
+  LatLng _offsetBy(LatLng p, double bearing, double d) {
     final b = bearing * math.pi / 180;
     final dLat = d * math.cos(b) / 111320.0;
     final dLon = d * math.sin(b) / (111320.0 * math.cos(p.latitude * math.pi / 180));
