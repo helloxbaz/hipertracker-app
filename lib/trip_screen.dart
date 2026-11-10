@@ -1125,7 +1125,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   if (next?.task != null && next!.task!.trim().isNotEmpty)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(next!.task!.trim(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                      child: Text(next.task!.trim(), maxLines: 2, overflow: TextOverflow.ellipsis),
                     ),
                   Row(children: [
                     Expanded(
