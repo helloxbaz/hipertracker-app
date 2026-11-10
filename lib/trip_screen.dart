@@ -51,6 +51,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   List<double> _cum = const []; // distance along the route to each line point
   List<int> _stepAt = const []; // line point of each step
   List<PlanStop> _routedStops = const [];
+  String _routedKey = ''; // where the current route goes
+  FuelStation? _detour; // going to a petrol pump first, then on to the next stop
+  List<FuelStation> _pumps = const []; // petrol pumps on the way, shown on the map
   int _userAt = 0;
   bool _routing = false;
   DateTime _routedAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -164,6 +167,18 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final first = _pos == null;
     _pos = p;
     _gpsProblem = null;
+
+    // reached the petrol pump? then on to the next stop
+    final pump = _detour;
+    if (pump != null && p.accuracy <= 60 &&
+        Geolocator.distanceBetween(p.latitude, p.longitude, pump.lat, pump.lon) <= 60) {
+      _detour = null;
+      HapticFeedback.heavyImpact();
+      _showBanner('Reached ${pump.name}');
+      final nxt = _remaining().firstOrNull;
+      _voice.say('You have arrived at ${pump.name}.${nxt == null ? '' : ' Resuming route to ${nxt.name}.'}');
+      _reroute();
+    }
 
     // reached the next stop?
     final rem = _remaining();
@@ -384,18 +399,23 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     try {
       // only the way to the next stop: the stops after it come one at a time, in the planned order
       final stops = rem.take(1).toList();
+      final pump = _detour;
       final heading = _moving && _pos != null && _pos!.heading.isFinite && _pos!.heading >= 0 ? _pos!.heading : null;
-      final r = await ErpService.route(from, [for (final s in stops) [s.lat!, s.lon!]], heading: heading);
+      final r = await ErpService.route(
+          from, pump != null ? [[pump.lat, pump.lon]] : [for (final s in stops) [s.lat!, s.lon!]],
+          heading: heading);
       if (!mounted) return;
-      final sameStop = _routedStops.isNotEmpty && _routedStops.first.idx == stops.first.idx;
+      final key = pump != null ? 'pump ${pump.lat},${pump.lon}' : 'stop ${stops.first.idx}';
+      final sameStop = key == _routedKey;
       setState(() {
         _use(r, r.alternatives, keepVoice: quiet && sameStop);
         _routedStops = stops;
+        _routedKey = key;
       });
       if (!_greeted) {
         _greeted = true;
         final to = r.legs.isNotEmpty ? r.legs.first[0].toDouble() : r.distance.toDouble();
-        _voice.say('Starting route to ${stops.first.name}. ${VoiceGuide.distance(to)} to go.');
+        _voice.say('Starting route to ${_destName() ?? stops.first.name}. ${VoiceGuide.distance(to)} to go.');
       } else if (_offRouteReroute) {
         _voice.say('Rerouting.');
       }
@@ -406,6 +426,136 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     } finally {
       _routing = false;
     }
+  }
+
+  /// The way ahead as points, for looking along it.
+  List<List<double>> _ahead() {
+    final r = _route;
+    final pts = <List<double>>[if (_pos != null) [_pos!.latitude, _pos!.longitude]];
+    if (r != null) pts.addAll(r.line.skip(_userAt));
+    return pts;
+  }
+
+  void _goToPump(FuelStation f) {
+    setState(() {
+      _detour = f;
+      _follow = true;
+    });
+    _voice.say('Going to ${f.name} first.');
+    _reroute();
+  }
+
+  void _cancelPump() {
+    setState(() => _detour = null);
+    final nxt = _remaining().firstOrNull;
+    if (nxt != null) _voice.say('Resuming route to ${nxt.name}.');
+    _reroute();
+  }
+
+  Future<void> _showPumps() async {
+    final pts = _ahead();
+    if (pts.length < 2) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Waiting for the route…')));
+      return;
+    }
+    final future = ErpService.fuelStations(pts);
+    future.then((list) {
+      if (mounted) setState(() => _pumps = list);
+    }).catchError((_) {});
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.55,
+        maxChildSize: 0.9,
+        builder: (ctx, scroll) => FutureBuilder<List<FuelStation>>(
+          future: future,
+          builder: (ctx, snap) {
+            final header = Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Row(children: [
+                const Icon(Icons.local_gas_station, color: Color(0xFFE37400)),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('Petrol pumps on your way', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                ),
+                if (_detour != null)
+                  TextButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _cancelPump();
+                    },
+                    child: const Text('Cancel pump stop'),
+                  ),
+              ]),
+            );
+            if (snap.connectionState != ConnectionState.done) {
+              return ListView(controller: scroll, children: [
+                header,
+                const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
+              ]);
+            }
+            final here = _pos;
+            double crow(FuelStation f) =>
+                here == null ? 0 : Geolocator.distanceBetween(here.latitude, here.longitude, f.lat, f.lon);
+            final list = [...(snap.data ?? const <FuelStation>[])]
+              ..sort((a, b) => (a.metres?.toDouble() ?? crow(a)).compareTo(b.metres?.toDouble() ?? crow(b)));
+            return ListView.separated(
+              controller: scroll,
+              itemCount: list.length + 1,
+              separatorBuilder: (_, i) => i == 0 ? const SizedBox.shrink() : const Divider(height: 1, indent: 72),
+              itemBuilder: (ctx, i) {
+                if (i == 0) {
+                  return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                    header,
+                    if (snap.hasError)
+                      Padding(padding: const EdgeInsets.all(20), child: Text('${snap.error}'))
+                    else if (list.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(20),
+                        child: Text('No petrol pumps found along the way to your next stop.'),
+                      ),
+                  ]);
+                }
+                final f = list[i - 1];
+                final far = f.metres != null ? _dist(f.metres!.toDouble()) : (here == null ? '' : '${_dist(crow(f))} away');
+                final info = [
+                  if (far.isNotEmpty) far,
+                  if (f.seconds != null) _mins(f.seconds!.toDouble()),
+                  if (f.open == true) 'Open now',
+                  if (f.open == false) 'Closed',
+                ].join(' · ');
+                return ListTile(
+                  leading: const CircleAvatar(
+                    backgroundColor: Color(0xFFFFF1E0),
+                    child: Icon(Icons.local_gas_station, color: Color(0xFFE37400)),
+                  ),
+                  title: Text(f.name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                  subtitle: Text([info, if (f.address.isNotEmpty) f.address].join('\n'),
+                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: f.open == false ? HsColors.danger : HsColors.textSecondary)),
+                  trailing: FilledButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _goToPump(f);
+                    },
+                    child: const Text('Go'),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    setState(() => _follow = false);
+                    if (_mapReady) _map.move(LatLng(f.lat, f.lon), 16);
+                  },
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _skip(PlanStop s) async {
@@ -524,11 +674,14 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     }
   }
 
-  String _arriveName(RouteStep s) => s.leg < _routedStops.length ? _routedStops[s.leg].name : 'Your stop';
+  /// Where the route ends: the petrol pump being driven to, or the next stop.
+  String? _destName() => _detour?.name ?? (_routedStops.isNotEmpty ? _routedStops.first.name : null);
+
+  String _arriveName(RouteStep s) => _destName() ?? 'Your stop';
 
   String _spokenText(RouteStep s) {
     if (s.type == 'arrive') {
-      final stop = s.leg < _routedStops.length ? _routedStops[s.leg].name : null;
+      final stop = _destName();
       return stop == null ? 'your stop is ahead' : '$stop is ahead';
     }
     final t = s.text;
@@ -581,7 +734,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
   String _stepText(RouteStep s) {
     if (s.type == 'arrive') {
-      final stop = s.leg < _routedStops.length ? _routedStops[s.leg].name : null;
+      final stop = _destName();
       return stop == null ? 'Arrive' : 'Arrive at $stop';
     }
     return s.text;
@@ -631,6 +784,13 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 right: 14,
                 bottom: (_panelOpen ? 330 : 120) + bottomPad,
                 child: Column(children: [
+                  _roundButton(
+                    icon: Icons.local_gas_station_outlined,
+                    color: _detour != null ? const Color(0xFFE37400) : HsColors.charcoal,
+                    tip: 'Petrol pumps on the way',
+                    onTap: _showPumps,
+                  ),
+                  const SizedBox(height: 12),
                   _roundButton(
                     icon: Icons.navigation,
                     tip: _headingUp ? 'North up' : 'Direction of travel up',
@@ -833,6 +993,26 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   ),
                 ),
               ),
+          for (final f in {..._pumps, if (_detour != null) _detour!})
+            Marker(
+              point: LatLng(f.lat, f.lon),
+              width: 34,
+              height: 34,
+              rotate: true,
+              child: GestureDetector(
+                onTap: () => _showPumps(),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: identical(f, _detour) ? const Color(0xFFE37400) : Colors.white,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFE37400), width: 2),
+                    boxShadow: const [BoxShadow(color: Color(0x40000000), blurRadius: 4)],
+                  ),
+                  child: Icon(Icons.local_gas_station,
+                      size: 20, color: identical(f, _detour) ? Colors.white : const Color(0xFFE37400)),
+                ),
+              ),
+            ),
           for (final s in stops)
             Marker(
               point: LatLng(s.lat!, s.lon!),
@@ -1102,7 +1282,10 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                                   to == null ? 'Finding the route…' : '${_dist(to.$1)}  •  ${DateFormat.jm().format(eta!)}',
                                   style: const TextStyle(color: Color(0xFF5F6368), fontSize: 17),
                                 ),
-                                Text('Stop ${plan.stops.indexOf(next) + 1} · ${next.name}',
+                                Text(
+                                    _detour != null
+                                        ? '⛽ ${_detour!.name} · then stop ${plan.stops.indexOf(next) + 1}'
+                                        : 'Stop ${plan.stops.indexOf(next) + 1} · ${next.name}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: const TextStyle(color: HsColors.navy, fontSize: 13, fontWeight: FontWeight.w600)),

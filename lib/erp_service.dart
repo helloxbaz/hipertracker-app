@@ -299,6 +299,13 @@ class ErpService {
   }
 
   /// Changes the stops still to visit of one of my trips (stops already reached stay); recalculates km and fuel.
+  /// Petrol pumps along [points] (the way ahead, from where I am), nearest first.
+  static Future<List<FuelStation>> fuelStations(List<List<double>> points) async {
+    final pts = points.map((p) => '${p[0].toStringAsFixed(5)},${p[1].toStringAsFixed(5)}').join(';');
+    final data = await _call('hipertracker_fuel_stations', {'points': pts});
+    return [for (final j in (data as List? ?? const [])) if (j is Map<String, dynamic>) FuelStation.fromJson(j)];
+  }
+
   /// Skip a stop of my trip (stops are reached in order), or [undo] the skip.
   static Future<void> skipMyStop(String plan, int idx, {bool undo = false}) async {
     await _call('hipertracker_skip_my_stop', {'plan': plan, 'idx': '$idx', if (undo) 'undo': '1'});
@@ -732,6 +739,31 @@ class RoutePlan {
           ? [for (final r in all.skip(1)) RoutePlan.fromJson(r, withAlternatives: false)]
           : const [],
       live: j['source'] == 'google',
+    );
+  }
+}
+
+/// A petrol pump on the way.
+class FuelStation {
+  final String name;
+  final String address;
+  final double lat;
+  final double lon;
+  final bool? open;
+  final int? metres; // by road from here (Google only)
+  final int? seconds;
+  const FuelStation(this.name, this.address, this.lat, this.lon, this.open, this.metres, this.seconds);
+
+  factory FuelStation.fromJson(Map<String, dynamic> j) {
+    int? n(dynamic v) => v == null ? null : (double.tryParse('$v'))?.round();
+    return FuelStation(
+      '${j['name'] ?? 'Petrol pump'}',
+      '${j['address'] ?? ''}',
+      double.tryParse('${j['lat']}') ?? 0,
+      double.tryParse('${j['lon']}') ?? 0,
+      j['open'] is bool ? j['open'] as bool : null,
+      n(j['metres']),
+      n(j['seconds']),
     );
   }
 }
