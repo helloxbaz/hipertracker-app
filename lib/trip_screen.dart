@@ -43,7 +43,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   StreamSubscription<Position>? _gps;
   String? _gpsProblem;
 
-  RoutePlan? _route;
+  RoutePlan? _route; // the way being followed, to the next stop only
+  List<RoutePlan> _alts = const []; // other ways to the same stop, shown in grey with how much slower they are
+  List<LatLng?> _altLabelAt = const [];
+  Timer? _refresh; // fresh traffic times and alternatives every few minutes
+  bool _skipping = false;
   List<double> _cum = const []; // distance along the route to each line point
   List<int> _stepAt = const []; // line point of each step
   List<PlanStop> _routedStops = const [];
@@ -90,12 +94,16 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     _load();
     _startGps();
     _poll = Timer.periodic(const Duration(seconds: 30), (_) => _load());
+    _refresh = Timer.periodic(const Duration(minutes: 4), (_) {
+      if (_route != null && !_routing) _reroute(quiet: true);
+    });
   }
 
   @override
   void dispose() {
     _gps?.cancel();
     _poll?.cancel();
+    _refresh?.cancel();
     _bannerTimer?.cancel();
     _voice.stop();
     _glide.dispose();
@@ -188,7 +196,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         }
       }
       _userAt = best;
-      if (bestD > _offRoute && DateTime.now().difference(_routedAt).inSeconds > 20) {
+      if (bestD > 35 && _alts.isNotEmpty && _switchToAlternative(p)) {
+        // took one of the other ways: follow it, like Google Maps does
+      } else if (bestD > _offRoute && DateTime.now().difference(_routedAt).inSeconds > 20) {
         _offRouteReroute = true;
         _reroute();
       }
@@ -259,7 +269,103 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     }
   }
 
-  Future<void> _reroute() async {
+  /// Distance along [r] to each of its points, and the point of each step.
+  (List<double>, List<int>) _measure(RoutePlan r) {
+    final cum = <double>[0];
+    for (var i = 1; i < r.line.length; i++) {
+      cum.add(cum[i - 1] + Geolocator.distanceBetween(r.line[i - 1][0], r.line[i - 1][1], r.line[i][0], r.line[i][1]));
+    }
+    // each step's place on the line (steps come in order, so search forwards)
+    final at = <int>[];
+    var from0 = 0;
+    for (final s in r.steps) {
+      var best = from0;
+      var bestD = double.infinity;
+      for (var i = from0; i < r.line.length; i++) {
+        final d = Geolocator.distanceBetween(s.lat, s.lon, r.line[i][0], r.line[i][1]);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+        if (d < 1) break;
+      }
+      at.add(best);
+      from0 = best;
+    }
+    return (cum, at);
+  }
+
+  /// Nearest point of [line] to [lat], [lon]: (index, metres).
+  (int, double) _nearest(List<List<double>> line, double lat, double lon, {int step = 1}) {
+    var best = 0;
+    var bestD = double.infinity;
+    for (var i = 0; i < line.length; i += step) {
+      final d = Geolocator.distanceBetween(lat, lon, line[i][0], line[i][1]);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return (best, bestD);
+  }
+
+  /// Where to put an alternative's "3 min slower" label: its point furthest from the main route.
+  LatLng? _labelPoint(RoutePlan alt, RoutePlan main) {
+    if (alt.line.length < 2) return null;
+    LatLng? at;
+    var far = 0.0;
+    final step = math.max(1, alt.line.length ~/ 80);
+    for (var i = 0; i < alt.line.length; i += step) {
+      final d = _nearest(main.line, alt.line[i][0], alt.line[i][1], step: math.max(1, main.line.length ~/ 150)).$2;
+      if (d > far) {
+        far = d;
+        at = LatLng(alt.line[i][0], alt.line[i][1]);
+      }
+    }
+    return far > 60 ? at : null;
+  }
+
+  void _use(RoutePlan r, List<RoutePlan> alts, {bool keepVoice = false}) {
+    final (cum, at) = _measure(r);
+    // keep what was already said about the next turn when only the traffic times changed
+    final old = _route != null && _spokenStep >= 0 && _spokenStep < _route!.steps.length ? _route!.steps[_spokenStep] : null;
+    _route = r;
+    _alts = alts;
+    _altLabelAt = [for (final a in alts) _labelPoint(a, r)];
+    _cum = cum;
+    _stepAt = at;
+    _userAt = _pos == null ? 0 : _nearest(r.line, _pos!.latitude, _pos!.longitude).$1;
+    _routedAt = DateTime.now();
+    _routeError = null;
+    final same = keepVoice && old != null
+        ? r.steps.indexWhere((s) => s.type == old.type && Geolocator.distanceBetween(s.lat, s.lon, old.lat, old.lon) < 20)
+        : -1;
+    if (same >= 0) {
+      _spokenStep = same;
+    } else {
+      _spokenStep = -1;
+      _spokenStage = 0;
+    }
+  }
+
+  /// On one of the other ways? Follow it instead (the old way becomes an alternative).
+  bool _switchToAlternative(Position p) {
+    final main = _route;
+    if (main == null) return false;
+    for (var k = 0; k < _alts.length; k++) {
+      final a = _alts[k];
+      final (_, d) = _nearest(a.line, p.latitude, p.longitude);
+      if (d <= 30) {
+        final others = [main, for (var j = 0; j < _alts.length; j++) if (j != k) _alts[j]];
+        _use(a, others);
+        _voice.say('Following the other route.');
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<void> _reroute({bool quiet = false}) async {
     if (_routing) return;
     final rem = _remaining();
     final from = _pos != null
@@ -269,47 +375,22 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       if (!mounted) return;
       setState(() {
         _route = null;
+        _alts = const [];
         _routedStops = const [];
       });
       return;
     }
     _routing = true;
     try {
-      final stops = rem.take(24).toList();
-      final r = await ErpService.route(from, [for (final s in stops) [s.lat!, s.lon!]]);
-      final cum = <double>[0];
-      for (var i = 1; i < r.line.length; i++) {
-        cum.add(cum[i - 1] +
-            Geolocator.distanceBetween(r.line[i - 1][0], r.line[i - 1][1], r.line[i][0], r.line[i][1]));
-      }
-      // each step's place on the line (steps come in order, so search forwards)
-      final at = <int>[];
-      var from0 = 0;
-      for (final s in r.steps) {
-        var best = from0;
-        var bestD = double.infinity;
-        for (var i = from0; i < r.line.length; i++) {
-          final d = Geolocator.distanceBetween(s.lat, s.lon, r.line[i][0], r.line[i][1]);
-          if (d < bestD) {
-            bestD = d;
-            best = i;
-          }
-          if (d < 1) break;
-        }
-        at.add(best);
-        from0 = best;
-      }
+      // only the way to the next stop: the stops after it come one at a time, in the planned order
+      final stops = rem.take(1).toList();
+      final heading = _moving && _pos != null && _pos!.heading.isFinite && _pos!.heading >= 0 ? _pos!.heading : null;
+      final r = await ErpService.route(from, [for (final s in stops) [s.lat!, s.lon!]], heading: heading);
       if (!mounted) return;
+      final sameStop = _routedStops.isNotEmpty && _routedStops.first.idx == stops.first.idx;
       setState(() {
-        _route = r;
-        _cum = cum;
-        _stepAt = at;
-        _userAt = 0;
+        _use(r, r.alternatives, keepVoice: quiet && sameStop);
         _routedStops = stops;
-        _routedAt = DateTime.now();
-        _routeError = null;
-        _spokenStep = -1;
-        _spokenStage = 0;
       });
       if (!_greeted) {
         _greeted = true;
@@ -322,9 +403,35 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       _offRouteReroute = false;
       if (_follow && _mapReady && _pos == null) _fitAll();
     } catch (e) {
-      if (mounted) setState(() => _routeError = 'Route not available right now');
+      if (mounted && !quiet) setState(() => _routeError = 'Route not available right now');
     } finally {
       _routing = false;
+    }
+  }
+
+  Future<void> _skip(PlanStop s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Skip ${s.name}?'),
+        content: const Text('Stops are reached in the planned order. Skip this one to go on to the next stop.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Skip stop')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _skipping = true);
+    try {
+      await ErpService.skipMyStop(_plan!.name, s.idx);
+      _showBanner('Skipped ${s.name}');
+      await _load();
+      _reroute();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _skipping = false);
     }
   }
 
@@ -351,16 +458,30 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   // ---------------------------------------------------------------------------------------------
   // what to show
 
-  /// The next instruction: [step, metres to it].
-  (RouteStep, double)? _nextStep() {
+  /// The next instruction: [step, metres to it, index].
+  (RouteStep, double, int)? _nextStep() {
     final r = _route;
     if (r == null || r.steps.isEmpty || _cum.isEmpty) return null;
     for (var i = 0; i < r.steps.length; i++) {
       final s = r.steps[i];
       if (s.type == 'depart') continue;
-      if (_stepAt[i] > _userAt) return (s, math.max(0, _cum[_stepAt[i]] - _cum[_userAt]));
+      if (_stepAt[i] > _userAt) return (s, math.max(0, _cum[_stepAt[i]] - _cum[_userAt]), i);
     }
     return null;
+  }
+
+  /// The turn straight after the next one, when it comes soon after it ("Then ↱").
+  RouteStep? _thenStep(int i) {
+    final r = _route;
+    if (r == null || i + 1 >= r.steps.length) return null;
+    final gap = _cum[_stepAt[i + 1]] - _cum[_stepAt[i]];
+    return gap <= 150 ? r.steps[i + 1] : null;
+  }
+
+  /// The road of an instruction ("Turn right onto Bank Rd" -> "Bank Rd"), or null.
+  String? _road(String text) {
+    final m = RegExp(r'\b(?:onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    return m?.group(1)?.trim();
   }
 
   /// Announce the next turn: once well before it, once when it's coming up, and when it's here.
@@ -463,10 +584,31 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
   // ---------------------------------------------------------------------------------------------
 
+  static const _navGreen = Color(0xFF275D5E); // Google-Maps-like instruction banner
+  static const _navGreenDark = Color(0xFF1D4748);
+
+  Widget _roundButton({required IconData icon, required VoidCallback onTap, String? tip, Color? color, Widget? child}) {
+    return Tooltip(
+      message: tip ?? '',
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 3,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(width: 54, height: 54, child: Center(child: child ?? Icon(icon, color: color ?? HsColors.charcoal, size: 26))),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     _screenH = MediaQuery.of(context).size.height;
     final plan = _plan;
+    final bottomPad = MediaQuery.of(context).padding.bottom;
+    final kmh = _pos != null && _pos!.speed.isFinite ? math.max(0, _pos!.speed * 3.6).round() : null;
     return Scaffold(
       body: plan == null
           ? Center(
@@ -482,76 +624,109 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 duration: const Duration(milliseconds: 250),
                 curve: Curves.easeOutCubic,
                 right: 14,
-                bottom: (_panelOpen ? 300 : 130) + MediaQuery.of(context).padding.bottom,
+                bottom: (_panelOpen ? 330 : 120) + bottomPad,
                 child: Column(children: [
-                  FloatingActionButton.small(
-                    heroTag: 'compass',
-                    backgroundColor: Colors.white,
-                    foregroundColor: HsColors.navy,
-                    tooltip: _headingUp ? 'North up' : 'Direction of travel up',
-                    onPressed: () {
+                  _roundButton(
+                    icon: Icons.navigation,
+                    tip: _headingUp ? 'North up' : 'Direction of travel up',
+                    onTap: () {
                       setState(() => _headingUp = !_headingUp);
                       if (!_headingUp && _mapReady) _map.rotate(0);
                       _recenter();
                     },
                     child: Transform.rotate(
                       angle: (_mapReady ? _map.camera.rotation : 0) * math.pi / 180,
-                      child: Icon(_headingUp ? Icons.explore : Icons.navigation_outlined),
+                      child: const Icon(Icons.navigation, color: Color(0xFFD93025), size: 28),
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  FloatingActionButton.small(
-                    heroTag: 'voice',
-                    backgroundColor: Colors.white,
-                    foregroundColor: _voice.enabled ? HsColors.navy : HsColors.danger,
-                    tooltip: _voice.enabled ? 'Mute voice' : 'Voice on',
-                    onPressed: () {
+                  const SizedBox(height: 12),
+                  _roundButton(
+                    icon: _voice.enabled ? Icons.volume_up_outlined : Icons.volume_off_outlined,
+                    color: _voice.enabled ? HsColors.charcoal : HsColors.danger,
+                    tip: _voice.enabled ? 'Mute voice' : 'Voice on',
+                    onTap: () {
                       setState(() => _voice.enabled = !_voice.enabled);
                       if (_voice.enabled) _voice.say('Voice directions on.');
                     },
-                    child: Icon(_voice.enabled ? Icons.volume_up : Icons.volume_off),
                   ),
-                  const SizedBox(height: 10),
-                  FloatingActionButton.small(
-                    heroTag: 'sat',
-                    backgroundColor: Colors.white,
-                    foregroundColor: HsColors.navy,
-                    tooltip: _satellite ? 'Map' : 'Satellite',
-                    onPressed: () => setState(() => _satellite = !_satellite),
-                    child: Icon(_satellite ? Icons.map_outlined : Icons.satellite_alt),
-                  ),
-                  const SizedBox(height: 10),
-                  FloatingActionButton.small(
-                    heroTag: 'all',
-                    backgroundColor: Colors.white,
-                    foregroundColor: HsColors.navy,
-                    tooltip: 'Whole trip',
-                    onPressed: () {
+                  const SizedBox(height: 12),
+                  _roundButton(
+                    icon: Icons.alt_route,
+                    tip: 'Route overview',
+                    onTap: () {
                       setState(() => _follow = false);
-                      _fitAll();
+                      _fitRoute();
                     },
-                    child: const Icon(Icons.zoom_out_map),
                   ),
-                  const SizedBox(height: 10),
-                  FloatingActionButton(
-                    heroTag: 'me',
-                    backgroundColor: _follow ? HsColors.blue : Colors.white,
-                    foregroundColor: _follow ? Colors.white : HsColors.blue,
-                    tooltip: 'Follow me',
-                    onPressed: _recenter,
-                    child: Icon(_follow ? Icons.navigation : Icons.my_location),
+                  const SizedBox(height: 12),
+                  _roundButton(
+                    icon: _satellite ? Icons.map_outlined : Icons.layers_outlined,
+                    tip: _satellite ? 'Map' : 'Satellite',
+                    onTap: () => setState(() => _satellite = !_satellite),
                   ),
                 ]),
               ),
+              if (kmh != null)
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 250),
+                  curve: Curves.easeOutCubic,
+                  left: 14,
+                  bottom: (_panelOpen ? 330 : 120) + bottomPad,
+                  child: Material(
+                    color: Colors.white,
+                    shape: const CircleBorder(),
+                    elevation: 3,
+                    child: SizedBox(
+                      width: 64,
+                      height: 64,
+                      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Text('$kmh', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w700, height: 1)),
+                        const Text('km/h', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                      ]),
+                    ),
+                  ),
+                ),
+              if (!_follow)
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 250),
+                  left: 0,
+                  right: 0,
+                  bottom: (_panelOpen ? 330 : 120) + bottomPad,
+                  child: Center(
+                    child: FloatingActionButton.extended(
+                      heroTag: 'recentre',
+                      backgroundColor: Colors.white,
+                      foregroundColor: HsColors.blue,
+                      onPressed: _recenter,
+                      icon: const Icon(Icons.navigation),
+                      label: const Text('Re-centre', style: TextStyle(fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ),
               if (_banner != null)
                 Positioned(
                   left: 24,
                   right: 24,
-                  top: MediaQuery.of(context).padding.top + 120,
+                  top: MediaQuery.of(context).padding.top + 170,
                   child: _reachedBanner(_banner!),
                 ),
             ]),
     );
+  }
+
+  /// The way to the next stop and its alternatives, all on screen.
+  void _fitRoute() {
+    final pts = <LatLng>[
+      for (final r in [if (_route != null) _route!, ..._alts])
+        for (var i = 0; i < r.line.length; i += math.max(1, r.line.length ~/ 60)) LatLng(r.line[i][0], r.line[i][1]),
+      if (_pos != null) LatLng(_pos!.latitude, _pos!.longitude),
+    ];
+    if (pts.length < 2) {
+      _fitAll();
+      return;
+    }
+    _map.rotate(0);
+    _map.fitCamera(CameraFit.coordinates(coordinates: pts, padding: const EdgeInsets.fromLTRB(50, 220, 90, 200)));
   }
 
   Widget _mapView(TripPlan plan) {
@@ -580,15 +755,37 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           PolylineLayer(polylines: [
             Polyline(points: [for (final p in _track) LatLng(p[0], p[1])], strokeWidth: 4, color: const Color(0x99607D8B)),
           ]),
+        if (_alts.isNotEmpty)
+          PolylineLayer(polylines: [
+            for (final a in _alts)
+              if (a.line.length > 1)
+                Polyline(
+                  points: [for (final p in a.line) LatLng(p[0], p[1])],
+                  strokeWidth: 7,
+                  color: const Color(0xFFA9C2E8),
+                  borderStrokeWidth: 2,
+                  borderColor: const Color(0xFF7FA0D0),
+                ),
+          ]),
         if (_route != null && _route!.line.length > 1)
           PolylineLayer(polylines: [
             Polyline(
               points: [for (final p in _route!.line.skip(math.max(0, _userAt - 1))) LatLng(p[0], p[1])],
-              strokeWidth: 7,
-              color: HsColors.blue,
-              borderStrokeWidth: 3,
-              borderColor: Colors.white,
+              strokeWidth: 9,
+              color: const Color(0xFF3B5BFD),
+              borderStrokeWidth: 2.5,
+              borderColor: const Color(0xFF1A2DB5),
             ),
+            // slow traffic orange, jams red, as Google reports them now
+            for (final t in _route!.traffic)
+              if (t[1] > _userAt && t[1] < _route!.line.length)
+                Polyline(
+                  points: [
+                    for (final p in _route!.line.sublist(math.max(t[0], math.max(0, _userAt - 1)), t[1] + 1)) LatLng(p[0], p[1]),
+                  ],
+                  strokeWidth: 9,
+                  color: t[2] == 2 ? const Color(0xFFD93025) : const Color(0xFFF29900),
+                ),
           ]),
         if (_shown != null && !_moving && _pos != null && _pos!.accuracy > 8)
           CircleLayer(circles: [
@@ -602,6 +799,35 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
             ),
           ]),
         MarkerLayer(markers: [
+          // "3 min slower" / "Similar ETA" on each other way; tap it to take that way
+          for (var k = 0; k < _alts.length; k++)
+            if (_route != null && k < _altLabelAt.length && _altLabelAt[k] != null)
+              Marker(
+                point: _altLabelAt[k]!,
+                rotate: true,
+                width: 130,
+                height: 56,
+                child: GestureDetector(
+                  onTap: () => setState(() {
+                    final pick = _alts[k];
+                    _use(pick, [_route!, for (var j = 0; j < _alts.length; j++) if (j != k) _alts[j]]);
+                    _voice.say('Route changed.');
+                  }),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: const [BoxShadow(color: Color(0x40000000), blurRadius: 6, offset: Offset(0, 2))],
+                      ),
+                      child: Text(_altLabel(_alts[k]),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: HsColors.charcoal)),
+                    ),
+                  ),
+                ),
+              ),
           for (final s in stops)
             Marker(
               point: LatLng(s.lat!, s.lon!),
@@ -715,59 +941,95 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     );
   }
 
+  String _altLabel(RoutePlan a) {
+    final diff = a.duration - (_route?.duration ?? a.duration);
+    final m = (diff.abs() / 60).round();
+    if (m < 1) return 'Similar ETA';
+    return diff > 0 ? '$m min slower' : '$m min faster';
+  }
+
   Widget _topBar(TripPlan plan) {
     final step = _nextStep();
     final allDone = _remaining().isEmpty;
+    final then = step == null ? null : _thenStep(step.$3);
+    final text = step == null ? '' : _stepText(step.$1);
+    final road = step == null || step.$1.type == 'arrive' ? null : _road(text);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Material(
-          color: Colors.white,
-          shape: const CircleBorder(),
-          elevation: 3,
-          child: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).pop()),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Material(
-            color: allDone ? HsColors.onDuty : HsColors.navy,
-            borderRadius: BorderRadius.circular(18),
-            elevation: 4,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              child: allDone
-                  ? const Row(children: [
-                      Icon(Icons.emoji_events, color: Colors.white, size: 34),
-                      SizedBox(width: 12),
-                      Expanded(
-                        child: Text('All stops done — great work!',
-                            style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-                      ),
-                    ])
-                  : step == null
-                      ? Text(
-                          _gpsProblem ?? _routeError ?? (_routing || _route == null ? 'Finding the route…' : 'Follow the blue line'),
-                          style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
-                        )
-                      : Row(children: [
-                          Icon(_icon(step.$1), color: Colors.white, size: 40),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
-                                  style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
-                              Text(_stepText(step.$1),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(color: Color(0xFFD6E6F5), fontSize: 15)),
-                            ]),
+          color: allDone ? HsColors.onDuty : _navGreen,
+          borderRadius: BorderRadius.circular(20),
+          elevation: 6,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+            child: allDone
+                ? const Row(children: [
+                    Icon(Icons.emoji_events, color: Colors.white, size: 40),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Text('All stops done — great work!',
+                          style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w700)),
+                    ),
+                  ])
+                : step == null
+                    ? Row(children: [
+                        const Icon(Icons.navigation, color: Colors.white, size: 36),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            _gpsProblem ?? _routeError ?? (_routing || _route == null ? 'Finding the best route…' : 'Follow the blue line'),
+                            style: const TextStyle(color: Colors.white, fontSize: 21, fontWeight: FontWeight.w600),
                           ),
-                        ]),
-            ),
+                        ),
+                      ])
+                    : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Icon(_icon(step.$1), color: Colors.white, size: 58),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
+                                style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w500, height: 1.15)),
+                            const SizedBox(height: 4),
+                            Text(road ?? text,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: road != null ? 30 : 24,
+                                    fontWeight: FontWeight.w700,
+                                    height: 1.15)),
+                          ]),
+                        ),
+                      ]),
           ),
         ),
+        if (then != null && !allDone)
+          Container(
+            margin: const EdgeInsets.only(left: 0, top: 0),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
+            decoration: const BoxDecoration(
+              color: _navGreenDark,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(16)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Text('Then', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              Icon(_icon(then), color: Colors.white, size: 30),
+            ]),
+          ),
       ]),
     );
+  }
+
+  Color _timeColor() {
+    final r = _route;
+    if (r == null || !r.live) return HsColors.onDuty;
+    final d = r.delay;
+    return d < 0.1 ? const Color(0xFF188038) : d < 0.3 ? const Color(0xFFE37400) : const Color(0xFFD93025);
   }
 
   Widget _bottomPanel(TripPlan plan) {
@@ -785,166 +1047,190 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (v > 150) toggle(false);
       },
       child: Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-        boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 12)],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(18, 6, 18, 12),
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            // handle: tap or drag to show / hide the details
-            InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: toggle,
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Column(children: [
-                  Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 14)],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+            child: AnimatedSize(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Center(
+                  child: Container(
                     width: 40,
                     height: 5,
+                    margin: const EdgeInsets.only(bottom: 8),
                     decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(3)),
                   ),
-                  Icon(_panelOpen ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_up,
-                      size: 20, color: HsColors.textSecondary),
-                ]),
-              ),
-            ),
-            if (next == null)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text('All stops done',
-                    style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: HsColors.onDuty)),
-              ),
-            if (next != null) ...[
-              InkWell(
-                onTap: toggle,
-                child: 
-              Row(children: [
-                Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Next stop ${plan.stops.indexOf(next) + 1}',
-                        style: const TextStyle(color: HsColors.textSecondary, fontSize: 13)),
-                    Text(next.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: HsColors.navy)),
-                  ]),
                 ),
-                if (to != null)
-                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                    Text(_mins(to.$2), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: HsColors.onDuty)),
-                    Text('${_dist(to.$1)} · ${DateFormat.jm().format(eta!)}',
-                        style: const TextStyle(color: HsColors.textSecondary, fontSize: 13)),
-                  ]),
-              ]),
-              ),
-              if (_panelOpen && next.task != null && next.task!.trim().isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text(next.task!.trim(), maxLines: 1, overflow: TextOverflow.ellipsis),
-                ),
-              const SizedBox(height: 12),
-            ],
-            Row(children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: LinearProgressIndicator(
-                    value: plan.stops.isEmpty ? 0 : done / plan.stops.length,
-                    minHeight: 8,
-                    color: HsColors.onDuty,
-                    backgroundColor: HsColors.cardHigh,
+                Row(children: [
+                  // exit, like Google's X
+                  Material(
+                    shape: const CircleBorder(side: BorderSide(color: Color(0xFF5F6368), width: 1.5)),
+                    color: Colors.white,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => Navigator.of(context).pop(),
+                      child: const SizedBox(width: 56, height: 56, child: Icon(Icons.close, size: 30, color: HsColors.charcoal)),
+                    ),
                   ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text('$done of ${plan.stops.length} reached', style: const TextStyle(fontWeight: FontWeight.w600)),
-            ]),
-            if (_panelOpen) ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              height: 64,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: plan.stops.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (context, i) {
-                  final s = plan.stops[i];
-                  final st = _status(s);
-                  final isNext = identical(s, next);
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () {
-                      showStopSheet(context, s, i + 1);
-                      if (s.hasLocation && _mapReady) {
-                        setState(() => _follow = false);
-                        _map.move(LatLng(s.lat!, s.lon!), 16);
-                      }
-                    },
-                    child: Container(
-                      width: 132,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: isNext ? HsColors.cardHigh : HsColors.card,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: isNext ? HsColors.blue : Colors.transparent, width: 1.5),
-                      ),
-                      child: Row(children: [
-                        SizedBox(width: 26, height: 26, child: StopBadge(number: i + 1, status: st)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(s.name,
+                  Expanded(
+                    child: InkWell(
+                      onTap: toggle,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 2),
+                        child: next == null
+                            ? const Text('All stops done',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: HsColors.onDuty))
+                            : Column(children: [
+                                Text(to == null ? '–' : _mins(to.$2),
+                                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.w600, color: _timeColor(), height: 1.1)),
+                                Text(
+                                  to == null ? 'Finding the route…' : '${_dist(to.$1)}  •  ${DateFormat.jm().format(eta!)}',
+                                  style: const TextStyle(color: Color(0xFF5F6368), fontSize: 17),
+                                ),
+                                Text('Stop ${plan.stops.indexOf(next) + 1} · ${next.name}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                                Text(
-                                  st == 'Pending'
-                                      ? (s.planned ?? (isNext ? 'Next' : 'To visit'))
-                                      : '${stopStatusLabel(st)}${s.arrived != null ? ' ${s.arrived}' : ''}',
-                                  style: TextStyle(fontSize: 12, color: stopColors[st] ?? HsColors.textSecondary),
-                                ),
+                                    style: const TextStyle(color: HsColors.navy, fontSize: 13, fontWeight: FontWeight.w600)),
                               ]),
-                        ),
-                      ]),
+                      ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                  Material(
+                    shape: const CircleBorder(side: BorderSide(color: Color(0xFF5F6368), width: 1.5)),
+                    color: Colors.white,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: toggle,
+                      child: SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: Icon(_panelOpen ? Icons.keyboard_arrow_down : Icons.format_list_bulleted,
+                            size: 28, color: HsColors.blue),
+                      ),
+                    ),
+                  ),
+                ]),
+                if (_panelOpen) ...[
+                  const SizedBox(height: 12),
+                  if (next?.task != null && next!.task!.trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(next!.task!.trim(), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ),
+                  Row(children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(6),
+                        child: LinearProgressIndicator(
+                          value: plan.stops.isEmpty ? 0 : done / plan.stops.length,
+                          minHeight: 8,
+                          color: HsColors.onDuty,
+                          backgroundColor: HsColors.cardHigh,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('$done of ${plan.stops.length} done', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ]),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 64,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      itemCount: plan.stops.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, i) {
+                        final s = plan.stops[i];
+                        final st = _status(s);
+                        final isNext = identical(s, next);
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            showStopSheet(context, s, i + 1);
+                            if (s.hasLocation && _mapReady) {
+                              setState(() => _follow = false);
+                              _map.move(LatLng(s.lat!, s.lon!), 16);
+                            }
+                          },
+                          child: Container(
+                            width: 132,
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: isNext ? HsColors.cardHigh : HsColors.card,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(color: isNext ? HsColors.blue : Colors.transparent, width: 1.5),
+                            ),
+                            child: Row(children: [
+                              SizedBox(width: 26, height: 26, child: StopBadge(number: i + 1, status: st)),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(s.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                      Text(
+                                        st == 'Pending'
+                                            ? (s.planned ?? (isNext ? 'Next' : 'To visit'))
+                                            : '${stopStatusLabel(st)}${s.arrived != null ? ' ${s.arrived}' : ''}',
+                                        style: TextStyle(fontSize: 12, color: stopColors[st] ?? HsColors.textSecondary),
+                                      ),
+                                    ]),
+                              ),
+                            ]),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    if (next?.phone != null) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => callStop(context, next!),
+                          icon: const Icon(Icons.call),
+                          label: const Text('Call'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    if (next != null) ...[
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _skipping ? null : () => _skip(next),
+                          icon: const Icon(Icons.skip_next),
+                          label: const Text('Skip stop'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _route == null ? null : _showSteps,
+                        icon: const Icon(Icons.format_list_numbered),
+                        label: const Text('Directions'),
+                      ),
+                    ),
+                  ]),
+                ],
+              ]),
             ),
-            const SizedBox(height: 10),
-            Row(children: [
-              if (next?.phone != null) ...[
-                OutlinedButton.icon(
-                  onPressed: () => callStop(context, next!),
-                  icon: const Icon(Icons.call),
-                  label: const Text('Call'),
-                ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _route == null ? null : _showSteps,
-                  icon: const Icon(Icons.format_list_numbered),
-                  label: const Text('All directions'),
-                ),
-              ),
-            ]),
-            ],
-          ]),
           ),
         ),
-      ),
       ),
     );
   }

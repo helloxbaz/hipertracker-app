@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -219,9 +220,12 @@ class ErpService {
   }
 
   /// Road route from [from] through [stops] (each [lat, lon]) in order, with turn-by-turn steps.
-  static Future<RoutePlan> route(List<double> from, List<List<double>> stops) async {
+  static Future<RoutePlan> route(List<double> from, List<List<double>> stops, {double? heading}) async {
     final points = [from, ...stops].map((p) => '${p[0].toStringAsFixed(6)},${p[1].toStringAsFixed(6)}').join(';');
-    final data = await _call('hipertracker_route', {'points': points}) as Map<String, dynamic>?;
+    final data = await _call('hipertracker_route', {
+      'points': points,
+      if (heading != null) 'heading': heading.round().toString(),
+    }) as Map<String, dynamic>?;
     if (data == null) throw const ErpException('No route found.');
     return RoutePlan.fromJson(data);
   }
@@ -295,6 +299,11 @@ class ErpService {
   }
 
   /// Changes the stops still to visit of one of my trips (stops already reached stay); recalculates km and fuel.
+  /// Skip a stop of my trip (stops are reached in order), or [undo] the skip.
+  static Future<void> skipMyStop(String plan, int idx, {bool undo = false}) async {
+    await _call('hipertracker_skip_my_stop', {'plan': plan, 'idx': '$idx', if (undo) 'undo': '1'});
+  }
+
   static Future<void> editMyTrip(String plan, List<VisitPlace> places, {List<double>? start}) async {
     await _call('hipertracker_edit_my_trip', {
       'plan': plan,
@@ -688,14 +697,23 @@ class RouteStep {
 class RoutePlan {
   final List<List<double>> line;
   final int distance; // metres
-  final int duration; // seconds
+  final int duration; // seconds, in today's traffic when it comes from Google
+  final int durationNoTraffic; // seconds with no traffic
   final List<List<int>> legs; // [metres, seconds] per stop
   final List<RouteStep> steps;
-  const RoutePlan(this.line, this.distance, this.duration, this.legs, this.steps);
+  final List<List<int>> traffic; // [from point, to point, 1 = slow / 2 = jammed]
+  final List<RoutePlan> alternatives; // other ways to the same stop (best route only)
+  final bool live; // times include live traffic
+  const RoutePlan(this.line, this.distance, this.duration, this.legs, this.steps,
+      {this.durationNoTraffic = 0, this.traffic = const [], this.alternatives = const [], this.live = false});
 
-  factory RoutePlan.fromJson(Map<String, dynamic> j) {
+  /// How much traffic adds: 0 = none ... 1 = twice as long.
+  double get delay => durationNoTraffic > 0 ? math.max(0, duration / durationNoTraffic - 1) : 0;
+
+  factory RoutePlan.fromJson(Map<String, dynamic> j, {bool withAlternatives = true}) {
     double d(dynamic v) => double.tryParse('$v') ?? 0;
     int n(dynamic v) => (double.tryParse('$v') ?? 0).round();
+    final all = (j['routes'] as List? ?? const []).whereType<Map<String, dynamic>>().toList();
     return RoutePlan(
       [for (final p in (j['line'] as List? ?? const [])) if (p is List && p.length >= 2) [d(p[0]), d(p[1])]],
       n(j['distance']),
@@ -706,6 +724,14 @@ class RoutePlan {
           RouteStep(d(s['lat']), d(s['lon']), '${s['text'] ?? ''}', '${s['type'] ?? ''}', '${s['modifier'] ?? ''}',
               n(s['distance']), n(s['leg'])),
       ],
+      durationNoTraffic: n(j['duration_no_traffic']),
+      traffic: [
+        for (final t in (j['traffic'] as List? ?? const [])) if (t is List && t.length >= 3) [n(t[0]), n(t[1]), n(t[2])],
+      ],
+      alternatives: withAlternatives
+          ? [for (final r in all.skip(1)) RoutePlan.fromJson(r, withAlternatives: false)]
+          : const [],
+      live: j['source'] == 'google',
     );
   }
 }
