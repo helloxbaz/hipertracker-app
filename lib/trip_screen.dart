@@ -1222,7 +1222,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       final r = _route;
       final mainColor = night ? const Color(0xFF6E8BFF) : const Color(0xFF4433EE);
       final mainEdge = night ? const Color(0xFF2B3FA8) : const Color(0xFF2A1DB0);
-      final altColor = night ? const Color(0xFF5B7896) : const Color(0xFFA9C2E8);
+      final altColor = night ? const Color(0xFF7E95C9) : const Color(0xFFAFC0F7); // Google's other-route blue
+      final altEdge = night ? const Color(0xFF3D4F86) : const Color(0xFF5A6FD8);
       gm.LatLng ll(List<double> p) => gm.LatLng(p[0], p[1]);
       _gLines = {
         if (_track.length > 1)
@@ -1236,11 +1237,25 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         for (var k = 0; k < _alts.length; k++)
           if (_alts[k].line.length > 1)
             gm.Polyline(
+              polylineId: gm.PolylineId('altedge$k'),
+              points: [for (final p in _alts[k].line) ll(p)],
+              color: altEdge,
+              width: px(9),
+              zIndex: 2,
+              jointType: gm.JointType.round,
+              startCap: gm.Cap.roundCap,
+              endCap: gm.Cap.roundCap,
+              consumeTapEvents: true,
+              onTap: () => _pickAlternative(k),
+            ),
+        for (var k = 0; k < _alts.length; k++)
+          if (_alts[k].line.length > 1)
+            gm.Polyline(
               polylineId: gm.PolylineId('alt$k'),
               points: [for (final p in _alts[k].line) ll(p)],
               color: altColor,
               width: px(6),
-              zIndex: 2,
+              zIndex: 3,
               jointType: gm.JointType.round,
               startCap: gm.Cap.roundCap,
               endCap: gm.Cap.roundCap,
@@ -1253,7 +1268,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
             points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
             color: mainEdge,
             width: px(9),
-            zIndex: 3,
+            zIndex: 4,
             jointType: gm.JointType.round,
             startCap: gm.Cap.roundCap,
             endCap: gm.Cap.roundCap,
@@ -1263,7 +1278,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
             points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
             color: mainColor,
             width: px(6),
-            zIndex: 4,
+            zIndex: 5,
             jointType: gm.JointType.round,
             startCap: gm.Cap.roundCap,
             endCap: gm.Cap.roundCap,
@@ -1278,7 +1293,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
               points: [gm.LatLng(_glideTo!.latitude, _glideTo!.longitude), ll(r.line[math.min(_userAt, r.line.length - 1)])],
               color: night ? const Color(0xFFBDC1C6) : const Color(0xFF5F6368),
               width: 4,
-              zIndex: 6,
+              zIndex: 7,
               patterns: [gm.PatternItem.dot, gm.PatternItem.gap(8)],
             ),
           for (var i = 0; i < r.traffic.length; i++)
@@ -1291,7 +1306,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 ],
                 color: r.traffic[i][2] == 2 ? const Color(0xFFE53935) : const Color(0xFFF9A825),
                 width: px(6),
-                zIndex: 5,
+                zIndex: 6,
                 jointType: gm.JointType.round,
               ),
         ],
