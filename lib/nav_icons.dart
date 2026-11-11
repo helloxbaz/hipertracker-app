@@ -173,72 +173,106 @@ class NavIcons {
   /// Google's own night look for the map, used in the evening.
   static const nightStyle = '''
 [
-  {"elementType":"geometry","stylers":[{"color":"#1d2c4d"}]},
-  {"elementType":"labels.text.fill","stylers":[{"color":"#8ec3b9"}]},
-  {"elementType":"labels.text.stroke","stylers":[{"color":"#1a3646"}]},
-  {"featureType":"administrative.country","elementType":"geometry.stroke","stylers":[{"color":"#4b6878"}]},
-  {"featureType":"administrative.land_parcel","elementType":"labels.text.fill","stylers":[{"color":"#64779e"}]},
-  {"featureType":"landscape.man_made","elementType":"geometry.stroke","stylers":[{"color":"#334e87"}]},
-  {"featureType":"landscape.natural","elementType":"geometry","stylers":[{"color":"#023e58"}]},
-  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#283d6a"}]},
-  {"featureType":"poi","elementType":"labels.text.fill","stylers":[{"color":"#6f9ba5"}]},
-  {"featureType":"poi","elementType":"labels.text.stroke","stylers":[{"color":"#1d2c4d"}]},
-  {"featureType":"poi.park","elementType":"geometry.fill","stylers":[{"color":"#023e58"}]},
-  {"featureType":"poi.park","elementType":"labels.text.fill","stylers":[{"color":"#3C7680"}]},
-  {"featureType":"road","elementType":"geometry","stylers":[{"color":"#304a7d"}]},
-  {"featureType":"road","elementType":"labels.text.fill","stylers":[{"color":"#98a5be"}]},
-  {"featureType":"road","elementType":"labels.text.stroke","stylers":[{"color":"#1d2c4d"}]},
-  {"featureType":"road.highway","elementType":"geometry","stylers":[{"color":"#2c6675"}]},
-  {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#255763"}]},
-  {"featureType":"road.highway","elementType":"labels.text.fill","stylers":[{"color":"#b0d5ce"}]},
-  {"featureType":"road.highway","elementType":"labels.text.stroke","stylers":[{"color":"#023e58"}]},
-  {"featureType":"transit","elementType":"labels.text.fill","stylers":[{"color":"#98a5be"}]},
-  {"featureType":"transit","elementType":"labels.text.stroke","stylers":[{"color":"#1d2c4d"}]},
-  {"featureType":"transit.line","elementType":"geometry.fill","stylers":[{"color":"#283d6a"}]},
-  {"featureType":"transit.station","elementType":"geometry","stylers":[{"color":"#3a4762"}]},
-  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#0e1626"}]},
-  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#4e6d70"}]}
+  {"elementType":"geometry","stylers":[{"color":"#1d3856"}]},
+  {"elementType":"labels.text.fill","stylers":[{"color":"#a9b8cc"}]},
+  {"elementType":"labels.text.stroke","stylers":[{"color":"#1d3856"}]},
+  {"elementType":"labels.icon","stylers":[{"saturation":-40},{"lightness":-20}]},
+  {"featureType":"administrative","elementType":"geometry.stroke","stylers":[{"color":"#3a5577"}]},
+  {"featureType":"landscape.man_made","elementType":"geometry","stylers":[{"color":"#213e5f"}]},
+  {"featureType":"landscape.natural","elementType":"geometry","stylers":[{"color":"#1d3856"}]},
+  {"featureType":"poi","elementType":"geometry","stylers":[{"color":"#21405f"}]},
+  {"featureType":"poi","elementType":"labels.text.fill","stylers":[{"color":"#8fa3ba"}]},
+  {"featureType":"poi.park","elementType":"geometry","stylers":[{"color":"#164552"}]},
+  {"featureType":"road","elementType":"geometry.fill","stylers":[{"color":"#3c5373"}]},
+  {"featureType":"road","elementType":"geometry.stroke","stylers":[{"color":"#0f1f33"}]},
+  {"featureType":"road","elementType":"labels.text.fill","stylers":[{"color":"#b7c4d6"}]},
+  {"featureType":"road","elementType":"labels.text.stroke","stylers":[{"color":"#1d3856"}]},
+  {"featureType":"road.highway","elementType":"geometry.fill","stylers":[{"color":"#4b6386"}]},
+  {"featureType":"road.highway","elementType":"geometry.stroke","stylers":[{"color":"#0f1f33"}]},
+  {"featureType":"transit","elementType":"geometry","stylers":[{"color":"#2a4566"}]},
+  {"featureType":"transit","elementType":"labels.text.fill","stylers":[{"color":"#8fa3ba"}]},
+  {"featureType":"water","elementType":"geometry","stylers":[{"color":"#014c65"}]},
+  {"featureType":"water","elementType":"labels.text.fill","stylers":[{"color":"#7fb3c4"}]}
 ]''';
 }
 
 /// The arrow drawn over the map where the camera keeps it (lower middle), lying flat on the tilted map.
 class NavArrow extends StatelessWidget {
-  const NavArrow({super.key, this.turn = 0, this.tilt = 0.9, this.moving = true});
+  const NavArrow({super.key, this.turn = 0, this.tilt = 0.9, this.moving = true, this.night = false});
 
   final double turn; // degrees, relative to the screen
-  final double tilt; // radians the map is tipped back
-  final bool moving; // arrow when driving, Google's blue dot when standing still
+  final double tilt; // kept for callers; the puck is drawn already seen from the tilted camera
+  final bool moving; // chevron when driving, dot when standing still
+  final bool night; // Google's night puck: blue disc, white chevron
 
   @override
   Widget build(BuildContext context) {
-    return Transform(
-      alignment: Alignment.center,
-      transform: Matrix4.identity()
-        ..setEntry(3, 2, 0.0018)
-        ..rotateX(tilt)
-        ..rotateZ(moving ? turn * math.pi / 180 : 0),
-      child: CustomPaint(size: const Size(72, 72), painter: _ArrowPainter(moving)),
-    );
+    return CustomPaint(size: const Size(92, 60), painter: _ArrowPainter(moving, night, turn));
   }
 }
 
+/// Google Maps' navigation puck as seen on the tilted map: a wide flat disc (an ellipse) with the chevron
+/// standing on it. Day: white disc, blue chevron. Night: blue disc, white chevron.
 class _ArrowPainter extends CustomPainter {
-  const _ArrowPainter(this.moving);
+  const _ArrowPainter(this.moving, this.night, this.turn);
 
   final bool moving;
+  final bool night;
+  final double turn;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (moving) return NavIcons.paintArrow(canvas, size);
-    final o = Offset(size.width / 2, size.height / 2);
-    final disc = size.width * 0.47;
-    canvas.drawCircle(o.translate(0, 1.5), disc, Paint()
-      ..color = const Color(0x40000000)
+    final w = size.width, h = size.height;
+    final o = Offset(w / 2, h / 2);
+    final disc = Rect.fromCenter(center: o, width: w * 0.96, height: h * 0.84);
+    canvas.drawOval(disc.shift(const Offset(0, 2)), Paint()
+      ..color = const Color(0x55000000)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
-    canvas.drawCircle(o, disc, Paint()..color = const Color(0xF2FFFFFF));
-    canvas.drawCircle(o, size.width * 0.20, Paint()..color = const Color(0xFF1A73E8));
+    canvas.drawOval(disc, Paint()..color = night ? const Color(0xF21A5AE0) : const Color(0xF5FFFFFF));
+    if (!night) {
+      canvas.drawOval(disc, Paint()
+        ..color = const Color(0x22000000)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1);
+    }
+    if (!moving) {
+      canvas.drawOval(Rect.fromCenter(center: o, width: w * 0.30, height: h * 0.30),
+          Paint()..color = night ? Colors.white : const Color(0xFF1A73E8));
+      return;
+    }
+    canvas.save();
+    canvas.translate(o.dx, o.dy);
+    canvas.scale(1, 0.82); // lying a little back, like on the tilted road
+    canvas.rotate(turn * math.pi / 180);
+    final ch = h * 0.80, cw = ch * 0.92;
+    final tip = Offset(0, -ch * 0.55), notch = Offset(0, ch * 0.18);
+    final left = Offset(-cw / 2, ch * 0.42), right = Offset(cw / 2, ch * 0.42);
+    if (night) {
+      canvas.drawPath(Path()
+        ..moveTo(tip.dx, tip.dy)
+        ..lineTo(notch.dx, notch.dy)
+        ..lineTo(left.dx, left.dy)
+        ..close(), Paint()..color = Colors.white);
+      canvas.drawPath(Path()
+        ..moveTo(tip.dx, tip.dy)
+        ..lineTo(right.dx, right.dy)
+        ..lineTo(notch.dx, notch.dy)
+        ..close(), Paint()..color = const Color(0xFFDDE5FA));
+    } else {
+      canvas.drawPath(Path()
+        ..moveTo(tip.dx, tip.dy)
+        ..lineTo(notch.dx, notch.dy)
+        ..lineTo(left.dx, left.dy)
+        ..close(), Paint()..color = const Color(0xFF4A8AF4));
+      canvas.drawPath(Path()
+        ..moveTo(tip.dx, tip.dy)
+        ..lineTo(right.dx, right.dy)
+        ..lineTo(notch.dx, notch.dy)
+        ..close(), Paint()..color = const Color(0xFF1A62E0));
+    }
+    canvas.restore();
   }
 
   @override
-  bool shouldRepaint(covariant _ArrowPainter old) => old.moving != moving;
+  bool shouldRepaint(covariant _ArrowPainter old) => old.moving != moving || old.night != night || old.turn != turn;
 }

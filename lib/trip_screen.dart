@@ -37,7 +37,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   // Google's map (tilted 3D, Google's roads and look) when the app was built with a Maps key,
   // else the OpenStreetMap one
   static const _google = bool.fromEnvironment('GMAPS');
-  static const _tiltDeg = 45.0;
+  static const _tiltDeg = 62.0; // Google Maps' driving view: looking ahead down the road
 
   /// How close counts as "arrived": at the stop, not across the road (looser when GPS is poor).
   double _arriveWithin(Position p) => (p.accuracy + 12).clamp(25.0, 50.0).toDouble();
@@ -1343,7 +1343,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   (double, double) _gPad() {
     if (Pip.active.value) return (_screenH * 0.42, _pipBar); // floating window: arrow low, above the turn bar
     final bottom = 120 + MediaQuery.of(context).padding.bottom;
-    final top = _follow && _headingUp ? _screenH * 0.5 : 170.0;
+    final top = _follow && _headingUp ? _screenH * 0.74 : 170.0; // arrow near the bottom, road ahead above
     return (top, bottom);
   }
 
@@ -1377,8 +1377,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       _gKey = key;
       int px(double w) => w.round(); // screen points: the map scales them for the screen itself
       final r = _route;
-      final mainColor = night ? const Color(0xFF6E8BFF) : const Color(0xFF4433EE);
-      final mainEdge = night ? const Color(0xFF2B3FA8) : const Color(0xFF2A1DB0);
+      // Google's route: indigo by day, bright cyan at night, with a dark edge
+      final mainColor = night ? const Color(0xFF19D3F5) : const Color(0xFF4433EE);
+      final mainEdge = night ? const Color(0xFF07121F) : const Color(0xFF2A1DB0);
       final altColor = night ? const Color(0xFF7E95C9) : const Color(0xFFAFC0F7); // Google's other-route blue
       final altEdge = night ? const Color(0xFF3D4F86) : const Color(0xFF5A6FD8);
       gm.LatLng ll(List<double> p) => gm.LatLng(p[0], p[1]);
@@ -1608,12 +1609,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Positioned(
       left: 0,
       right: 0,
-      top: y - 36,
+      top: y - 30,
       child: IgnorePointer(
         child: Center(
           child: Transform.scale(
             scale: Pip.active.value ? 0.5 : 1, // smaller in the floating window
-            child: NavArrow(turn: turn, tilt: _headingUp ? 0.75 : 0, moving: _moving),
+            child: NavArrow(turn: turn, moving: _moving, night: _dark),
           ),
         ),
       ),
