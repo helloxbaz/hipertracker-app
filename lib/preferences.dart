@@ -42,6 +42,7 @@ class Preferences {
   static const String tripVoiceName = 'trip_voice_name';
   static const String tripVoiceLocale = 'trip_voice_locale';
   static const String tripVoiceRate = 'trip_voice_rate';
+  static const String tripMapTheme = 'trip_map_theme'; // auto / light / dark
 
   static Future<void> init() async {
     _initFuture ??= _createInstance();
@@ -57,7 +58,7 @@ class Preferences {
         allowList: {
           id, url, accuracy, distance, interval, angle, heartbeat, buffer, wakelock, stopDetection, preferPlatformProviders, password,
           erpUrl, erpUser, erpSid, erpEmployee, erpEmployeeName, onDuty, dutySince, dutyMode, alarmInterval, escalateAfter,
-          requireLocation, trackingOnly, tripVoice, tripVoiceName, tripVoiceLocale, tripVoiceRate,
+          requireLocation, trackingOnly, tripVoice, tripVoiceName, tripVoiceLocale, tripVoiceRate, tripMapTheme,
         },
       ),
     );

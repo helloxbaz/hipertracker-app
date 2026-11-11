@@ -119,22 +119,25 @@ class NavIcons {
   static void paintArrow(Canvas c, Size size) {
     final w = size.width, h = size.height;
     final o = Offset(w / 2, h / 2);
-    c.drawCircle(o, w * 0.46, Paint()..color = const Color(0x332F80ED));
+    // soft halo like Google's
+    c.drawCircle(o, w * 0.48, Paint()..color = const Color(0x264285F4));
     final p = Path()
-      ..moveTo(o.dx, h * 0.14)
-      ..lineTo(w * 0.80, h * 0.80)
-      ..lineTo(o.dx, h * 0.64)
-      ..lineTo(w * 0.20, h * 0.80)
+      ..moveTo(o.dx, h * 0.10)
+      ..lineTo(w * 0.84, h * 0.84)
+      ..lineTo(o.dx, h * 0.66)
+      ..lineTo(w * 0.16, h * 0.84)
       ..close();
-    c.drawPath(p.shift(const Offset(0, 2)), Paint()
-      ..color = const Color(0x66000000)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+    c.drawPath(p.shift(Offset(0, h * 0.04)), Paint()
+      ..color = const Color(0x73000000)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
     c.drawPath(p, Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.07
+      ..strokeWidth = w * 0.10
       ..strokeJoin = StrokeJoin.round);
-    c.drawPath(p, Paint()..color = const Color(0xFF3B78F6));
+    c.drawPath(p, Paint()
+      ..shader = ui.Gradient.linear(Offset(o.dx, h * 0.1), Offset(o.dx, h * 0.84),
+          const [Color(0xFF5B9BFF), Color(0xFF1A62E8)]));
   }
 
   /// Google's own night look for the map, used in the evening.
@@ -183,7 +186,7 @@ class NavArrow extends StatelessWidget {
         ..setEntry(3, 2, 0.0018)
         ..rotateX(tilt)
         ..rotateZ(turn * math.pi / 180),
-      child: const CustomPaint(size: Size(64, 64), painter: _ArrowPainter()),
+      child: const CustomPaint(size: Size(76, 76), painter: _ArrowPainter()),
     );
   }
 }

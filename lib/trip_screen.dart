@@ -15,6 +15,7 @@ import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
 import 'nav_icons.dart';
+import 'preferences.dart';
 import 'stop_actions.dart';
 import 'voice_guide.dart';
 
@@ -48,6 +49,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   bool _mapReady = false;
   bool _follow = true;
   bool _satellite = false;
+  String _theme = 'auto'; // map: auto (dark from 6:30 pm to 6 am), light or dark
 
   TripPlan? _plan;
   List<List<double>> _track = const [];
@@ -107,6 +109,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _voice.init();
+    try {
+      _theme = Preferences.instance.getString(Preferences.tripMapTheme) ?? 'auto';
+    } catch (_) {}
     WakelockPlus.enable().catchError((_) {});
     _load();
     _startGps();
@@ -974,9 +979,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   ),
                   const SizedBox(height: 12),
                   _roundButton(
-                    icon: _satellite ? Icons.map_outlined : Icons.layers_outlined,
-                    tip: _satellite ? 'Map' : 'Satellite',
-                    onTap: () => setState(() => _satellite = !_satellite),
+                    icon: Icons.layers_outlined,
+                    tip: 'Map look',
+                    onTap: _mapLook,
                   ),
                 ]),
               ),
@@ -985,7 +990,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   duration: const Duration(milliseconds: 250),
                   curve: Curves.easeOutCubic,
                   left: 14,
-                  bottom: (_panelOpen ? 330 : 120) + bottomPad,
+                  bottom: (_panelOpen ? 330 : 120) + bottomPad + (_google ? 34 : 0), // Google logo stays visible
                   child: Material(
                     color: Colors.white,
                     shape: const CircleBorder(),
@@ -1045,8 +1050,78 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   Widget _mapView(TripPlan plan) => _google ? _googleMap(plan) : _osmMap(plan);
 
   bool _night() {
-    final h = DateTime.now().hour;
-    return h >= 18 || h < 6 || MediaQuery.of(context).platformBrightness == Brightness.dark;
+    if (_theme == 'dark') return true;
+    if (_theme == 'light') return false;
+    final n = DateTime.now();
+    final m = n.hour * 60 + n.minute;
+    return m >= 18 * 60 + 30 || m < 6 * 60; // like Google Maps: dark after sunset
+  }
+
+  /// Layers button: map or satellite, and light / dark / automatic.
+  Future<void> _mapLook() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, set) {
+          void pick(VoidCallback f) {
+            setState(f);
+            set(() {});
+          }
+
+          Widget choice(String label, IconData icon, bool on, VoidCallback tap) => Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(14),
+                    onTap: tap,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: on ? HsColors.blue : const Color(0xFFDADCE0), width: on ? 2 : 1),
+                        color: on ? HsColors.cardHigh : null,
+                      ),
+                      child: Column(children: [
+                        Icon(icon, color: on ? HsColors.blue : HsColors.charcoal),
+                        const SizedBox(height: 6),
+                        Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: on ? HsColors.blue : HsColors.charcoal)),
+                      ]),
+                    ),
+                  ),
+                ),
+              );
+          void theme(String t) => pick(() {
+                _theme = t;
+                _gKey = '';
+                try {
+                  Preferences.instance.setString(Preferences.tripMapTheme, t);
+                } catch (_) {}
+              });
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Map type', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 10),
+                Row(children: [
+                  choice('Default', Icons.map_outlined, !_satellite, () => pick(() => _satellite = false)),
+                  choice('Satellite', Icons.satellite_alt_outlined, _satellite, () => pick(() => _satellite = true)),
+                ]),
+                const SizedBox(height: 18),
+                const Text('Colour scheme', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                const SizedBox(height: 10),
+                Row(children: [
+                  choice('Automatic', Icons.brightness_auto_outlined, _theme == 'auto', () => theme('auto')),
+                  choice('Light', Icons.light_mode_outlined, _theme == 'light', () => theme('light')),
+                  choice('Dark', Icons.dark_mode_outlined, _theme == 'dark', () => theme('dark')),
+                ]),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   /// Top / bottom map padding: following, the camera centre (where the arrow is) sits low on the screen.
@@ -1079,12 +1154,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     }
 
     final key = [
-      identityHashCode(_route), _userAt, identityHashCode(_alts), identityHashCode(_pumps), identityHashCode(_detour),
+      identityHashCode(_route), _userAt, identityHashCode(_glideTo), identityHashCode(_alts), identityHashCode(_pumps), identityHashCode(_detour),
       _track.length, night, _follow, for (final s in stops) _status(s), next?.idx,
     ].join('|');
     if (key != _gKey) {
       _gKey = key;
-      int px(double w) => (w * dpr).round();
+      int px(double w) => w.round(); // screen points: the map scales them for the screen itself
       final r = _route;
       final mainColor = night ? const Color(0xFF26C6F9) : const Color(0xFF1A73E8);
       final mainEdge = night ? const Color(0xFF0B4F6C) : const Color(0xFF0D47A1);
@@ -1105,7 +1180,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
               polylineId: gm.PolylineId('alt$k'),
               points: [for (final p in _alts[k].line) ll(p)],
               color: altColor,
-              width: px(7),
+              width: px(6),
               zIndex: 2,
               jointType: gm.JointType.round,
               startCap: gm.Cap.roundCap,
@@ -1116,9 +1191,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (r != null && r.line.length > 1) ...[
           gm.Polyline(
             polylineId: const gm.PolylineId('edge'),
-            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            points: [
+              if (_glideTo != null) gm.LatLng(_glideTo!.latitude, _glideTo!.longitude), // from the arrow
+              for (final p in r.line.skip(_userAt + 1)) ll(p),
+            ],
             color: mainEdge,
-            width: px(11),
+            width: px(9),
             zIndex: 3,
             jointType: gm.JointType.round,
             startCap: gm.Cap.roundCap,
@@ -1126,9 +1204,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           ),
           gm.Polyline(
             polylineId: const gm.PolylineId('route'),
-            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            points: [
+              if (_glideTo != null) gm.LatLng(_glideTo!.latitude, _glideTo!.longitude),
+              for (final p in r.line.skip(_userAt + 1)) ll(p),
+            ],
             color: mainColor,
-            width: px(8),
+            width: px(6),
             zIndex: 4,
             jointType: gm.JointType.round,
             startCap: gm.Cap.roundCap,
@@ -1143,7 +1224,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                     ll(p),
                 ],
                 color: r.traffic[i][2] == 2 ? const Color(0xFFE53935) : const Color(0xFFF9A825),
-                width: px(8),
+                width: px(6),
                 zIndex: 5,
                 jointType: gm.JointType.round,
               ),
@@ -1265,9 +1346,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Positioned(
       left: 0,
       right: 0,
-      top: y - 32,
+      top: y - 38,
       child: IgnorePointer(
-        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.85 : 0)),
+        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.55 : 0)),
       ),
     );
   }
