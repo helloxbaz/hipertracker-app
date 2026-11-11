@@ -140,28 +140,34 @@ class NavIcons {
   }
 
   /// Google-Maps-style chevron: blue, white edge, soft shadow, on a faint blue disc.
+  /// Google Maps' navigation puck: a white disc (lying on the map) with a blue chevron, shaded like a
+  /// folded paper arrow (left half lighter, right half darker), no outline.
   static void paintArrow(Canvas c, Size size) {
     final w = size.width, h = size.height;
     final o = Offset(w / 2, h / 2);
-    // soft halo like Google's
-    c.drawCircle(o, w * 0.48, Paint()..color = const Color(0x264285F4));
-    final p = Path()
-      ..moveTo(o.dx, h * 0.10)
-      ..lineTo(w * 0.84, h * 0.84)
-      ..lineTo(o.dx, h * 0.66)
-      ..lineTo(w * 0.16, h * 0.84)
-      ..close();
-    c.drawPath(p.shift(Offset(0, h * 0.04)), Paint()
-      ..color = const Color(0x73000000)
+    final disc = w * 0.47;
+    c.drawCircle(o.translate(0, h * 0.02), disc, Paint()
+      ..color = const Color(0x40000000)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
-    c.drawPath(p, Paint()
-      ..color = Colors.white
+    c.drawCircle(o, disc, Paint()..color = const Color(0xF2FFFFFF));
+    c.drawCircle(o, disc, Paint()
+      ..color = const Color(0x1F000000)
       ..style = PaintingStyle.stroke
-      ..strokeWidth = w * 0.10
-      ..strokeJoin = StrokeJoin.round);
-    c.drawPath(p, Paint()
-      ..shader = ui.Gradient.linear(Offset(o.dx, h * 0.1), Offset(o.dx, h * 0.84),
-          const [Color(0xFF5B9BFF), Color(0xFF1A62E8)]));
+      ..strokeWidth = 1);
+    final tip = Offset(o.dx, h * 0.20);
+    final notch = Offset(o.dx, h * 0.62);
+    final left = Offset(w * 0.25, h * 0.76);
+    final right = Offset(w * 0.75, h * 0.76);
+    c.drawPath(Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(notch.dx, notch.dy)
+      ..lineTo(left.dx, left.dy)
+      ..close(), Paint()..color = const Color(0xFF4A8AF4));
+    c.drawPath(Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(right.dx, right.dy)
+      ..lineTo(notch.dx, notch.dy)
+      ..close(), Paint()..color = const Color(0xFF1A62E0));
   }
 
   /// Google's own night look for the map, used in the evening.
@@ -211,7 +217,7 @@ class NavArrow extends StatelessWidget {
         ..setEntry(3, 2, 0.0018)
         ..rotateX(tilt)
         ..rotateZ(moving ? turn * math.pi / 180 : 0),
-      child: CustomPaint(size: const Size(60, 60), painter: _ArrowPainter(moving)),
+      child: CustomPaint(size: const Size(72, 72), painter: _ArrowPainter(moving)),
     );
   }
 }
@@ -225,13 +231,12 @@ class _ArrowPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (moving) return NavIcons.paintArrow(canvas, size);
     final o = Offset(size.width / 2, size.height / 2);
-    final r = size.width * 0.17;
-    canvas.drawCircle(o, size.width * 0.46, Paint()..color = const Color(0x334285F4));
-    canvas.drawCircle(o.translate(0, 2), r + 4, Paint()
-      ..color = const Color(0x55000000)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
-    canvas.drawCircle(o, r + 4, Paint()..color = Colors.white);
-    canvas.drawCircle(o, r, Paint()..color = const Color(0xFF1A73E8));
+    final disc = size.width * 0.47;
+    canvas.drawCircle(o.translate(0, 1.5), disc, Paint()
+      ..color = const Color(0x40000000)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+    canvas.drawCircle(o, disc, Paint()..color = const Color(0xF2FFFFFF));
+    canvas.drawCircle(o, size.width * 0.20, Paint()..color = const Color(0xFF1A73E8));
   }
 
   @override

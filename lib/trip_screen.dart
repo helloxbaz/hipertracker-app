@@ -798,7 +798,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final m = RegExp(r'\b(onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
     if (m == null) return null;
     final prep = m.group(1)!.toLowerCase();
-    return (prep == 'towards' ? 'toward' : (prep == 'onto' || prep == 'on' || prep == 'into' ? '' : prep), m.group(2)!.trim());
+    // "Chalappuram Rd/Madhavan Nair Rd": Google's banner shows the first name
+    final road = m.group(2)!.split('/').first.trim();
+    return (prep == 'towards' ? 'toward' : (prep == 'onto' || prep == 'on' || prep == 'into' ? '' : prep), road);
   }
 
   /// Road name with "Rd", "St" ... smaller, like Google's banner.
@@ -1431,7 +1433,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Positioned(
       left: 0,
       right: 0,
-      top: y - 38,
+      top: y - 36,
       child: IgnorePointer(
         child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.75 : 0, moving: _moving)),
       ),
