@@ -342,6 +342,36 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return best;
   }
 
+  /// The part of [line] still ahead of [p]: from the point on the line nearest [p] (within [within] m),
+  /// so nothing is left drawn behind the arrow. The whole line if [p] isn't near it.
+  List<gm.LatLng> _aheadOf(List<List<double>> line, LatLng? p, {int around = -1, double within = 40}) {
+    final all = [for (final q in line) gm.LatLng(q[0], q[1])];
+    if (p == null || line.length < 2) return all;
+    final k = math.cos(p.latitude * math.pi / 180) * 111320.0;
+    const m = 111320.0;
+    final px = p.longitude * k, py = p.latitude * m;
+    final from = around < 0 ? 0 : math.max(0, around - 10);
+    final to = around < 0 ? line.length - 1 : math.min(line.length - 1, around + 80);
+    var bestD = within, bestI = -1;
+    gm.LatLng? bestQ;
+    for (var i = from; i < to; i++) {
+      final ax = line[i][1] * k, ay = line[i][0] * m, bx = line[i + 1][1] * k, by = line[i + 1][0] * m;
+      final dx = bx - ax, dy = by - ay;
+      final len = dx * dx + dy * dy;
+      if (len < 0.01) continue;
+      final t = (((px - ax) * dx + (py - ay) * dy) / len).clamp(0.0, 1.0);
+      final qx = ax + dx * t, qy = ay + dy * t;
+      final d = math.sqrt((px - qx) * (px - qx) + (py - qy) * (py - qy));
+      if (d < bestD) {
+        bestD = d;
+        bestI = i;
+        bestQ = gm.LatLng(qy / m, qx / k);
+      }
+    }
+    if (bestI < 0) return around < 0 ? all : all.sublist(math.max(0, around - 1));
+    return [bestQ!, ...all.sublist(bestI + 1)];
+  }
+
   /// Which side of the road the stop is, going along the route: "left", "right" or null (ahead).
   String? _sideOf(double lat, double lon) {
     final line = _route?.line;
@@ -1218,7 +1248,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     }
 
     final key = [
-      identityHashCode(_route), _userAt, identityHashCode(_glideTo), identityHashCode(_alts), identityHashCode(_pumps), identityHashCode(_detour),
+      identityHashCode(_route), _userAt, identityHashCode(_glideFrom), identityHashCode(_alts), identityHashCode(_pumps), identityHashCode(_detour),
       _track.length, night, _follow, for (final s in stops) _status(s), next?.idx,
     ].join('|');
     if (key != _gKey) {
@@ -1230,6 +1260,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       final altColor = night ? const Color(0xFF7E95C9) : const Color(0xFFAFC0F7); // Google's other-route blue
       final altEdge = night ? const Color(0xFF3D4F86) : const Color(0xFF5A6FD8);
       gm.LatLng ll(List<double> p) => gm.LatLng(p[0], p[1]);
+      // the route from where the arrow is (nothing left behind it)
+      final ahead = r == null ? const <gm.LatLng>[] : _aheadOf(r.line, _glideFrom, around: _userAt);
       _gLines = {
         if (_track.length > 1)
           gm.Polyline(
@@ -1243,7 +1275,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           if (_alts[k].line.length > 1)
             gm.Polyline(
               polylineId: gm.PolylineId('altedge$k'),
-              points: [for (final p in _alts[k].line) ll(p)],
+              points: _aheadOf(_alts[k].line, _glideFrom, within: 60),
               color: altEdge,
               width: px(9),
               zIndex: 2,
@@ -1257,7 +1289,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           if (_alts[k].line.length > 1)
             gm.Polyline(
               polylineId: gm.PolylineId('alt$k'),
-              points: [for (final p in _alts[k].line) ll(p)],
+              points: _aheadOf(_alts[k].line, _glideFrom, within: 60),
               color: altColor,
               width: px(6),
               zIndex: 3,
@@ -1270,7 +1302,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (r != null && r.line.length > 1) ...[
           gm.Polyline(
             polylineId: const gm.PolylineId('edge'),
-            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            points: ahead,
             color: mainEdge,
             width: px(9),
             zIndex: 4,
@@ -1280,7 +1312,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           ),
           gm.Polyline(
             polylineId: const gm.PolylineId('route'),
-            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
+            points: ahead,
             color: mainColor,
             width: px(6),
             zIndex: 5,
