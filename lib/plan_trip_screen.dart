@@ -95,7 +95,9 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
   Future<void> _loadPlaces() async {
     setState(() => _loading = true);
     try {
-      final list = await ErpService.visitPlaces(lat: _pos?.latitude, lon: _pos?.longitude, q: _search.text.trim());
+      final q = _search.text.trim();
+      final list = await ErpService.visitPlaces(lat: _pos?.latitude, lon: _pos?.longitude, q: q);
+      if (q != _search.text.trim()) return; // typed more since: that search's answer is coming
       if (mounted) {
         setState(() {
           _places = list;
@@ -111,6 +113,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
   }
 
   void _onSearch(String _) {
+    setState(() {}); // show / hide the clear button
     _searchTimer?.cancel();
     _searchTimer = Timer(const Duration(milliseconds: 450), _loadPlaces);
   }
@@ -237,12 +240,50 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
   @override
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
+    final typing = MediaQuery.of(context).viewInsets.bottom > 0; // keyboard up: smaller map, more list
     return Scaffold(
       appBar: AppBar(title: Text(widget.edit == null ? 'Plan my trip' : 'Edit ${widget.edit!.title}')),
+      // every child keeps its place (nothing appears or disappears above the search box while it loads),
+      // so the search box keeps the keyboard and what's typed
       body: Column(children: [
-        SizedBox(height: math.max(200, h * 0.34), child: _mapView()),
-        if (_route != null) _summary(_route!),
-        if (_loading || _ordering) const LinearProgressIndicator(minHeight: 2),
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          height: typing ? 110 : math.max(200, h * 0.34),
+          child: _mapView(),
+        ),
+        _route != null ? _summary(_route!) : const SizedBox.shrink(),
+        SizedBox(
+          height: 2,
+          child: _loading || _ordering ? const LinearProgressIndicator(minHeight: 2) : null,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: TextField(
+            key: const ValueKey('search'),
+            controller: _search,
+            onChanged: _onSearch,
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Search customers, leads, deals…',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _search.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear',
+                      icon: const Icon(Icons.close),
+                      onPressed: () {
+                        _search.clear();
+                        _onSearch('');
+                        setState(() {});
+                      },
+                    ),
+              filled: true,
+              fillColor: HsColors.card,
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              isDense: true,
+            ),
+          ),
+        ),
         Expanded(child: _list()),
       ]),
       bottomNavigationBar: SafeArea(
@@ -417,7 +458,7 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
     final rest = _places.where((p) => !_isChosen(p)).toList();
     return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 16), children: [
       if (_error != null) ...[HsBanner(text: _error!, error: true), const SizedBox(height: 10)],
-      if (_pos == null && !_loading)
+      if (_pos == null && _places.isNotEmpty)
         const Padding(
           padding: EdgeInsets.only(bottom: 10),
           child: HsBanner(text: 'Your location is not known yet. Turn on location to sort places by distance.'),
@@ -491,19 +532,6 @@ class _PlanTripScreenState extends State<PlanTripScreen> {
         ),
         const SizedBox(height: 18),
       ],
-      TextField(
-        controller: _search,
-        onChanged: _onSearch,
-        decoration: InputDecoration(
-          hintText: 'Search customers, leads, deals…',
-          prefixIcon: const Icon(Icons.search),
-          filled: true,
-          fillColor: HsColors.card,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
-          isDense: true,
-        ),
-      ),
-      const SizedBox(height: 12),
       Text(_pos == null ? 'Places to visit' : 'Places near you',
           style: const TextStyle(fontWeight: FontWeight.w700, color: HsColors.navy, fontSize: 16)),
       const SizedBox(height: 6),
