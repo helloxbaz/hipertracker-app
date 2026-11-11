@@ -35,7 +35,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   // Google's map (tilted 3D, Google's roads and look) when the app was built with a Maps key,
   // else the OpenStreetMap one
   static const _google = bool.fromEnvironment('GMAPS');
-  static const _tiltDeg = 55.0;
+  static const _tiltDeg = 45.0;
 
   /// How close counts as "arrived": at the stop, not across the road (looser when GPS is poor).
   double _arriveWithin(Position p) => (p.accuracy + 12).clamp(25.0, 50.0).toDouble();
@@ -286,7 +286,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
     // zoom by speed, like a car navigator
     final kmh = speed * 3.6;
-    final targetZoom = !_moving ? 17.2 : kmh < 15 ? 17.5 : kmh < 35 ? 16.8 : kmh < 60 ? 16.1 : 15.4;
+    final targetZoom = _google
+        ? (!_moving ? 15.6 : kmh < 20 ? 16.6 : kmh < 45 ? 16.0 : kmh < 70 ? 15.4 : 14.8) // Google Maps' own levels
+        : (!_moving ? 17.2 : kmh < 15 ? 17.5 : kmh < 35 ? 16.8 : kmh < 60 ? 16.1 : 15.4);
     _zoom = _zoom + (targetZoom - _zoom) * 0.35;
 
     _glideFrom = _shown ?? target;
@@ -776,9 +778,31 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   }
 
   /// The road of an instruction ("Turn right onto Bank Rd" -> "Bank Rd"), or null.
-  String? _road(String text) {
-    final m = RegExp(r'\b(?:onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
-    return m?.group(1)?.trim();
+  String? _road(String text) => _roadParts(text)?.$2;
+
+  /// ("toward", "V K Krishna Menon Rd") from "Head north toward V K Krishna Menon Rd".
+  (String, String)? _roadParts(String text) {
+    final m = RegExp(r'\b(onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
+    if (m == null) return null;
+    final prep = m.group(1)!.toLowerCase();
+    return (prep == 'towards' ? 'toward' : (prep == 'onto' || prep == 'on' || prep == 'into' ? '' : prep), m.group(2)!.trim());
+  }
+
+  /// Road name with "Rd", "St" ... smaller, like Google's banner.
+  InlineSpan _roadSpan(String prep, String road, double size) {
+    final parts = <InlineSpan>[
+      if (prep.isNotEmpty)
+        TextSpan(text: '$prep ', style: TextStyle(fontSize: size * 0.55, fontWeight: FontWeight.w500)),
+    ];
+    final re = RegExp(r'\b(Rd|St|Ave|Hwy|Ln|Jn|Byp)\b');
+    var at = 0;
+    for (final m in re.allMatches(road)) {
+      parts.add(TextSpan(text: road.substring(at, m.start)));
+      parts.add(TextSpan(text: m.group(0), style: TextStyle(fontSize: size * 0.6, fontWeight: FontWeight.w600)));
+      at = m.end;
+    }
+    parts.add(TextSpan(text: road.substring(at)));
+    return TextSpan(children: parts);
   }
 
   /// Announce the next turn: once well before it, once when it's coming up, and when it's here.
@@ -895,8 +919,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
   // ---------------------------------------------------------------------------------------------
 
-  static const _navGreen = Color(0xFF275D5E); // Google-Maps-like instruction banner
-  static const _navGreenDark = Color(0xFF1D4748);
+  static const _navGreen = Color(0xFF0B5E5B); // Google Maps' instruction banner
+  static const _navGreenDark = Color(0xFF07423F);
 
   Widget _roundButton({required IconData icon, required VoidCallback onTap, String? tip, Color? color, Widget? child}) {
     return Tooltip(
@@ -1161,8 +1185,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       _gKey = key;
       int px(double w) => w.round(); // screen points: the map scales them for the screen itself
       final r = _route;
-      final mainColor = night ? const Color(0xFF26C6F9) : const Color(0xFF1A73E8);
-      final mainEdge = night ? const Color(0xFF0B4F6C) : const Color(0xFF0D47A1);
+      final mainColor = night ? const Color(0xFF6E8BFF) : const Color(0xFF4433EE);
+      final mainEdge = night ? const Color(0xFF2B3FA8) : const Color(0xFF2A1DB0);
       final altColor = night ? const Color(0xFF5B7896) : const Color(0xFFA9C2E8);
       gm.LatLng ll(List<double> p) => gm.LatLng(p[0], p[1]);
       _gLines = {
@@ -1191,10 +1215,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (r != null && r.line.length > 1) ...[
           gm.Polyline(
             polylineId: const gm.PolylineId('edge'),
-            points: [
-              if (_glideTo != null) gm.LatLng(_glideTo!.latitude, _glideTo!.longitude), // from the arrow
-              for (final p in r.line.skip(_userAt + 1)) ll(p),
-            ],
+            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
             color: mainEdge,
             width: px(9),
             zIndex: 3,
@@ -1204,10 +1225,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           ),
           gm.Polyline(
             polylineId: const gm.PolylineId('route'),
-            points: [
-              if (_glideTo != null) gm.LatLng(_glideTo!.latitude, _glideTo!.longitude),
-              for (final p in r.line.skip(_userAt + 1)) ll(p),
-            ],
+            points: [for (final p in r.line.skip(math.max(0, _userAt - 1))) ll(p)],
             color: mainColor,
             width: px(6),
             zIndex: 4,
@@ -1215,6 +1233,19 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
             startCap: gm.Cap.roundCap,
             endCap: gm.Cap.roundCap,
           ),
+          // not on the road yet (inside a building, a car park): dots to where the route starts, like Google
+          if (_glideTo != null &&
+              Geolocator.distanceBetween(_glideTo!.latitude, _glideTo!.longitude, r.line[math.min(_userAt, r.line.length - 1)][0],
+                      r.line[math.min(_userAt, r.line.length - 1)][1]) >
+                  12)
+            gm.Polyline(
+              polylineId: const gm.PolylineId('walk'),
+              points: [gm.LatLng(_glideTo!.latitude, _glideTo!.longitude), ll(r.line[math.min(_userAt, r.line.length - 1)])],
+              color: night ? const Color(0xFFBDC1C6) : const Color(0xFF5F6368),
+              width: 4,
+              zIndex: 6,
+              patterns: [gm.PatternItem.dot, gm.PatternItem.gap(8)],
+            ),
           for (var i = 0; i < r.traffic.length; i++)
             if (r.traffic[i][1] > _userAt && r.traffic[i][1] < r.line.length)
               gm.Polyline(
@@ -1348,7 +1379,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       right: 0,
       top: y - 38,
       child: IgnorePointer(
-        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.55 : 0)),
+        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.75 : 0, moving: _moving)),
       ),
     );
   }
@@ -1638,7 +1669,10 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                             Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
                                 style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w500, height: 1.15)),
                             const SizedBox(height: 4),
-                            Text(road ?? text,
+                            Text.rich(
+                                road == null
+                                    ? TextSpan(text: text)
+                                    : _roadSpan(_roadParts(text)?.$1 ?? '', road, 30),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(

@@ -173,10 +173,11 @@ class NavIcons {
 
 /// The arrow drawn over the map where the camera keeps it (lower middle), lying flat on the tilted map.
 class NavArrow extends StatelessWidget {
-  const NavArrow({super.key, this.turn = 0, this.tilt = 0.9});
+  const NavArrow({super.key, this.turn = 0, this.tilt = 0.9, this.moving = true});
 
   final double turn; // degrees, relative to the screen
   final double tilt; // radians the map is tipped back
+  final bool moving; // arrow when driving, Google's blue dot when standing still
 
   @override
   Widget build(BuildContext context) {
@@ -185,18 +186,30 @@ class NavArrow extends StatelessWidget {
       transform: Matrix4.identity()
         ..setEntry(3, 2, 0.0018)
         ..rotateX(tilt)
-        ..rotateZ(turn * math.pi / 180),
-      child: const CustomPaint(size: Size(76, 76), painter: _ArrowPainter()),
+        ..rotateZ(moving ? turn * math.pi / 180 : 0),
+      child: CustomPaint(size: const Size(76, 76), painter: _ArrowPainter(moving)),
     );
   }
 }
 
 class _ArrowPainter extends CustomPainter {
-  const _ArrowPainter();
+  const _ArrowPainter(this.moving);
+
+  final bool moving;
 
   @override
-  void paint(Canvas canvas, Size size) => NavIcons.paintArrow(canvas, size);
+  void paint(Canvas canvas, Size size) {
+    if (moving) return NavIcons.paintArrow(canvas, size);
+    final o = Offset(size.width / 2, size.height / 2);
+    final r = size.width * 0.17;
+    canvas.drawCircle(o, size.width * 0.46, Paint()..color = const Color(0x334285F4));
+    canvas.drawCircle(o.translate(0, 2), r + 4, Paint()
+      ..color = const Color(0x55000000)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
+    canvas.drawCircle(o, r + 4, Paint()..color = Colors.white);
+    canvas.drawCircle(o, r, Paint()..color = const Color(0xFF1A73E8));
+  }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _ArrowPainter old) => old.moving != moving;
 }
