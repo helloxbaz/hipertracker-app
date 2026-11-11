@@ -1024,8 +1024,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         canPop: false,
         onPopInvokedWithResult: (didPop, _) async {
           if (didPop) return;
+          final nav = Navigator.of(context);
           if (await Pip.enter()) return;
-          if (mounted) Navigator.of(context).pop();
+          if (mounted) nav.pop();
         },
         child: Builder(key: _themeKey, builder: _page),
       ),
@@ -1930,10 +1931,10 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (v > 150) toggle(false);
       },
       child: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           color: _surface,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 14)],
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 14)],
         ),
         child: SafeArea(
           top: false,
