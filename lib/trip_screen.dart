@@ -799,7 +799,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     if (m == null) return null;
     final prep = m.group(1)!.toLowerCase();
     // "Chalappuram Rd/Madhavan Nair Rd" shown "Chalappuram Rd / Madhavan Nair Rd", like Google's banner
-    final road = m.group(2)!.split('/').map((x) => x.trim()).where((x) => x.isNotEmpty).join(' / ');
+    // "Annie Hall Rd toward Beypore Rd": the road is Annie Hall Rd
+    final name = m.group(2)!.split(RegExp(r'\s+(?:toward|towards)\s+', caseSensitive: false)).first;
+    final road = name.split('/').map((x) => x.trim()).where((x) => x.isNotEmpty).join(' / ');
     return (prep == 'towards' ? 'toward' : (prep == 'onto' || prep == 'on' || prep == 'into' ? '' : prep), road);
   }
 
@@ -983,7 +985,10 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6)],
                         ),
-                        child: Text(_currentRoad()!,
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.55),
+                        child: Text(_currentRoad()!.split(' / ').first,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: Color(0xFF0B1A6E), fontSize: 17, fontWeight: FontWeight.w700)),
                       ),
                     ),
@@ -1332,7 +1337,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         final t = _stepText(nx.$1);
         final parts = _roadParts(t);
         final first = parts?.$2.split(' / ').first; // the map label keeps to the first road name
-        final text = parts == null ? t : '${parts.$1.isEmpty ? '' : '${parts.$1} '}$first';
+        final text = parts == null ? t : first!;
         final ic = _icon(nx.$1);
         final icon = NavIcons.get('callout-${ic.codePoint}-$text', dpr, (d) => NavIcons.callout(d, ic, text), redraw);
         if (icon != null) {
@@ -1744,7 +1749,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                             Text.rich(
                                 road == null
                                     ? TextSpan(text: text)
-                                    : _roadSpan(_roadParts(text)?.$1 ?? '', road, 30),
+                                    : _roadSpan('', road, 30),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
