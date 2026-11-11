@@ -780,6 +780,19 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   /// The road of an instruction ("Turn right onto Bank Rd" -> "Bank Rd"), or null.
   String? _road(String text) => _roadParts(text)?.$2;
 
+  /// The road I'm on now (from the last instruction passed), shown at the bottom like Google.
+  String? _currentRoad() {
+    final r = _route;
+    if (r == null || _stepAt.length != r.steps.length) return null;
+    String? road;
+    for (var i = 0; i < r.steps.length; i++) {
+      if (_stepAt[i] > _userAt) break;
+      final p = _roadParts(_stepText(r.steps[i]));
+      if (p != null && p.$1.isEmpty) road = p.$2; // "onto X", "on X": now on X
+    }
+    return road;
+  }
+
   /// ("toward", "V K Krishna Menon Rd") from "Head north toward V K Krishna Menon Rd".
   (String, String)? _roadParts(String text) {
     final m = RegExp(r'\b(onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
@@ -954,6 +967,26 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           : Stack(children: [
               Positioned.fill(child: _mapView(plan)),
               if (_google && _follow && _shown != null) _arrowOverlay(),
+              if (_follow && _currentRoad() != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 118 + MediaQuery.of(context).padding.bottom,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6)],
+                        ),
+                        child: Text(_currentRoad()!,
+                            style: const TextStyle(color: Color(0xFF0B1A6E), fontSize: 17, fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                  ),
+                ),
               Positioned(left: 0, right: 0, top: 0, child: SafeArea(child: _topBar(plan))),
               Positioned(left: 0, right: 0, bottom: 0, child: _bottomPanel(plan)),
               AnimatedPositioned(
@@ -1276,6 +1309,23 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           onTap: () => _pickAlternative(k),
         ));
       }
+      // the next turn, labelled on the map like Google
+      final nx = _nextStep();
+      if (nx != null && nx.$1.type != 'arrive' && nx.$1.type != 'depart') {
+        final t = _stepText(nx.$1);
+        final parts = _roadParts(t);
+        final text = parts == null ? t : '${parts.$1.isEmpty ? '' : '${parts.$1} '}${parts.$2}';
+        final ic = _icon(nx.$1);
+        final icon = NavIcons.get('callout-${ic.codePoint}-$text', dpr, (d) => NavIcons.callout(d, ic, text), redraw);
+        if (icon != null) {
+          marks.add(gm.Marker(
+            markerId: const gm.MarkerId('turn'),
+            position: gm.LatLng(nx.$1.lat, nx.$1.lon),
+            icon: icon,
+            anchor: const Offset(0.02, 0.9),
+          ));
+        }
+      }
       for (final f in {..._pumps, if (_detour != null) _detour!}) {
         final going = identical(f, _detour);
         final icon = NavIcons.get('pump-$going', dpr, (d) => NavIcons.pump(d, going: going), redraw);
@@ -1338,7 +1388,11 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         onMapCreated: (c) {
           _gmap = c;
           _mapReady = true;
-          _fitAll();
+          if (_pos != null) {
+            _recenter();
+          } else {
+            _fitAll();
+          }
         },
         style: night && !_satellite ? NavIcons.nightStyle : null,
         mapType: _satellite ? gm.MapType.hybrid : gm.MapType.normal,

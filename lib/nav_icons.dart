@@ -109,9 +109,33 @@ class NavIcons {
     });
   }
 
+  /// Google's blue callout at the next turn: "↰ toward Chalappuram".
+  static Future<ui.Image> callout(double dpr, IconData icon, String text) {
+    final t = _text(text, 15, Colors.white, weight: FontWeight.w700, max: 190);
+    const ic = 20.0;
+    final w = 12 + ic + 8 + t.width + 14, h = math.max(ic, t.height) + 14;
+    return _paint(w + 6, h + 6, dpr, (c) {
+      final r = RRect.fromRectAndCorners(Rect.fromLTWH(3, 3, w, h),
+          topLeft: const Radius.circular(4), topRight: Radius.circular(h / 2),
+          bottomRight: Radius.circular(h / 2), bottomLeft: Radius.circular(h / 2));
+      c.drawRRect(r.shift(const Offset(0, 1.5)), Paint()
+        ..color = const Color(0x55000000)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5));
+      c.drawRRect(r, Paint()..color = const Color(0xFF1F3FD6));
+      final ip = TextPainter(
+        text: TextSpan(
+            text: String.fromCharCode(icon.codePoint),
+            style: TextStyle(fontSize: ic, fontFamily: icon.fontFamily, package: icon.fontPackage, color: Colors.white)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      ip.paint(c, Offset(3 + 12, 3 + (h - ip.height) / 2));
+      t.paint(c, Offset(3 + 12 + ic + 8, 3 + (h - t.height) / 2));
+    });
+  }
+
   /// The navigation arrow as a map picture (used when the map isn't following it).
   static Future<ui.Image> arrow(double dpr) {
-    const s = 56.0;
+    const s = 40.0; // the size Google uses when the map isn't following
     return _paint(s, s, dpr, (c) => paintArrow(c, const Size(s, s)));
   }
 
@@ -187,7 +211,7 @@ class NavArrow extends StatelessWidget {
         ..setEntry(3, 2, 0.0018)
         ..rotateX(tilt)
         ..rotateZ(moving ? turn * math.pi / 180 : 0),
-      child: CustomPaint(size: const Size(76, 76), painter: _ArrowPainter(moving)),
+      child: CustomPaint(size: const Size(60, 60), painter: _ArrowPainter(moving)),
     );
   }
 }
