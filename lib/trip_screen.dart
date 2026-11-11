@@ -1082,21 +1082,22 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 Positioned(
                   left: 0,
                   right: 0,
-                  bottom: 118 + MediaQuery.of(context).padding.bottom,
+                  // sits on the top edge of the bottom bar, under the arrow (like Google's road label)
+                  bottom: 100 + MediaQuery.of(context).padding.bottom,
                   child: IgnorePointer(
                     child: Center(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
                         decoration: BoxDecoration(
                           color: _surface,
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6)],
                         ),
-                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.55),
+                        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.5),
                         child: Text(_currentRoad()!.split(' / ').first,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: _dark ? Colors.white : const Color(0xFF0B1A6E), fontSize: 17, fontWeight: FontWeight.w700)),
+                            style: TextStyle(color: _dark ? Colors.white : const Color(0xFF0B1A6E), fontSize: 14, fontWeight: FontWeight.w700)),
                       ),
                     ),
                   ),
@@ -1343,7 +1344,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   (double, double) _gPad() {
     if (Pip.active.value) return (_screenH * 0.42, _pipBar); // floating window: arrow low, above the turn bar
     final bottom = 120 + MediaQuery.of(context).padding.bottom;
-    final top = _follow && _headingUp ? _screenH * 0.74 : 170.0; // arrow near the bottom, road ahead above
+    final top = _follow && _headingUp ? _screenH * 0.68 : 170.0; // arrow near the bottom, road ahead above
     return (top, bottom);
   }
 
