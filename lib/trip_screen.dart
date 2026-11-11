@@ -15,6 +15,7 @@ import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
 import 'nav_icons.dart';
+import 'pip.dart';
 import 'preferences.dart';
 import 'stop_actions.dart';
 import 'voice_guide.dart';
@@ -109,6 +110,9 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   void initState() {
     super.initState();
     _voice.init();
+    Pip.init();
+    Pip.enable(true); // leaving the app during a trip shows it in a floating window
+    Pip.active.addListener(_onPip);
     try {
       _theme = Preferences.instance.getString(Preferences.tripMapTheme) ?? 'auto';
     } catch (_) {}
@@ -121,8 +125,14 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     });
   }
 
+  void _onPip() {
+    if (mounted) setState(() => _gKey = '');
+  }
+
   @override
   void dispose() {
+    Pip.enable(false);
+    Pip.active.removeListener(_onPip);
     _gps?.cancel();
     _poll?.cancel();
     _refresh?.cancel();
@@ -647,7 +657,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       if (mounted) setState(() => _pumps = list);
     }).catchError((_) {});
     await showModalBottomSheet<void>(
-      context: context,
+      context: _ctx,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) => DraggableScrollableSheet(
@@ -744,7 +754,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
 
   Future<void> _skip(PlanStop s) async {
     final ok = await showDialog<bool>(
-      context: context,
+      context: _ctx,
       builder: (ctx) => AlertDialog(
         title: Text('Skip ${s.name}?'),
         content: const Text('Stops are reached in the planned order. Skip this one to go on to the next stop.'),
@@ -973,20 +983,56 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     return Tooltip(
       message: tip ?? '',
       child: Material(
-        color: Colors.white,
+        color: _surface,
         shape: const CircleBorder(),
         elevation: 3,
         child: InkWell(
           customBorder: const CircleBorder(),
           onTap: onTap,
-          child: SizedBox(width: 54, height: 54, child: Center(child: child ?? Icon(icon, color: color ?? HsColors.charcoal, size: 26))),
+          child: SizedBox(width: 54, height: 54, child: Center(child: child ?? Icon(icon, color: color ?? _ink, size: 26))),
         ),
       ),
     );
   }
 
+  bool get _dark => _night();
+  Color get _surface => _dark ? const Color(0xFF1F2124) : Colors.white;
+  Color get _surface2 => _dark ? const Color(0xFF34373C) : HsColors.cardHigh;
+  Color get _ink => _dark ? Colors.white : HsColors.charcoal;
+  Color get _ink2 => _dark ? const Color(0xFFBDC1C6) : const Color(0xFF5F6368);
+
+  final _themeKey = GlobalKey();
+
+  /// Context under the trip screen's own (dark or light) theme, for its sheets and dialogs.
+  BuildContext get _ctx => _themeKey.currentContext ?? context;
+
   @override
   Widget build(BuildContext context) {
+    final base = Theme.of(context);
+    final theme = _dark
+        ? ThemeData(
+            useMaterial3: true,
+            brightness: Brightness.dark,
+            colorSchemeSeed: HsColors.blue,
+            fontFamily: base.textTheme.bodyMedium?.fontFamily,
+          )
+        : base;
+    return Theme(
+      data: theme,
+      // back: keep navigating in a small floating window (like Google Maps); ✕ ends the trip screen
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) async {
+          if (didPop) return;
+          if (await Pip.enter()) return;
+          if (mounted) Navigator.of(context).pop();
+        },
+        child: Builder(key: _themeKey, builder: _page),
+      ),
+    );
+  }
+
+  Widget _page(BuildContext context) {
     _screenH = MediaQuery.of(context).size.height;
     final plan = _plan;
     final bottomPad = MediaQuery.of(context).padding.bottom;
@@ -1001,6 +1047,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           : Stack(children: [
               Positioned.fill(child: _mapView(plan)),
               if (_google && _follow && _shown != null) _arrowOverlay(),
+              if (Pip.active.value) ..._pipOverlay(plan) else ...[
               if (_follow && _currentRoad() != null)
                 Positioned(
                   left: 0,
@@ -1011,7 +1058,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: _surface,
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: const [BoxShadow(color: Color(0x33000000), blurRadius: 6)],
                         ),
@@ -1019,7 +1066,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                         child: Text(_currentRoad()!.split(' / ').first,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: Color(0xFF0B1A6E), fontSize: 17, fontWeight: FontWeight.w700)),
+                            style: TextStyle(color: _dark ? Colors.white : const Color(0xFF0B1A6E), fontSize: 17, fontWeight: FontWeight.w700)),
                       ),
                     ),
                   ),
@@ -1034,7 +1081,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 child: Column(children: [
                   _roundButton(
                     icon: Icons.local_gas_station_outlined,
-                    color: _detour != null ? const Color(0xFFE37400) : HsColors.charcoal,
+                    color: _detour != null ? const Color(0xFFE37400) : _ink,
                     tip: 'Petrol pumps on the way',
                     onTap: _showPumps,
                   ),
@@ -1055,7 +1102,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   const SizedBox(height: 12),
                   _roundButton(
                     icon: _voice.enabled ? Icons.volume_up_outlined : Icons.volume_off_outlined,
-                    color: _voice.enabled ? HsColors.charcoal : HsColors.danger,
+                    color: _voice.enabled ? _ink : HsColors.danger,
                     tip: _voice.enabled ? 'Mute voice' : 'Voice on',
                     onTap: () {
                       setState(() => _voice.enabled = !_voice.enabled);
@@ -1086,7 +1133,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   left: 14,
                   bottom: (_panelOpen ? 330 : 120) + bottomPad + (_google ? 34 : 0), // Google logo stays visible
                   child: Material(
-                    color: Colors.white,
+                    color: _surface,
                     shape: const CircleBorder(),
                     elevation: 3,
                     child: SizedBox(
@@ -1108,7 +1155,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   child: Center(
                     child: FloatingActionButton.extended(
                       heroTag: 'recentre',
-                      backgroundColor: Colors.white,
+                      backgroundColor: _surface,
                       foregroundColor: HsColors.blue,
                       onPressed: _recenter,
                       icon: const Icon(Icons.navigation),
@@ -1123,8 +1170,57 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                   top: MediaQuery.of(context).padding.top + 170,
                   child: _reachedBanner(_banner!),
                 ),
+              ],
             ]),
     );
+  }
+
+  /// The small floating window (picture-in-picture) while the driver is in another app:
+  /// the map with the next turn on top, like Google Maps.
+  List<Widget> _pipOverlay(TripPlan plan) {
+    final step = _nextStep();
+    final to = _toNext();
+    final text = step == null ? '' : _stepText(step.$1);
+    final road = step == null || step.$1.type == 'arrive' ? null : _road(text)?.split(' / ').first;
+    return [
+      Positioned(
+        left: 0,
+        right: 0,
+        top: 0,
+        child: Container(
+          color: _navGreen,
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+          child: Row(children: [
+            Icon(step == null ? Icons.navigation : _icon(step.$1), color: Colors.white, size: 28),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                if (step != null)
+                  Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
+                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600, height: 1.1)),
+                Text(road ?? (step == null ? 'HiperTracker' : text),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, height: 1.15)),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+      if (to != null)
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            color: _surface,
+            padding: const EdgeInsets.symmetric(vertical: 3),
+            child: Text('${_mins(to.$2)} · ${_dist(to.$1)}',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: _timeColor(), fontSize: 12, fontWeight: FontWeight.w700)),
+          ),
+        ),
+    ];
   }
 
   /// The way to the next stop and its alternatives, all on screen.
@@ -1154,7 +1250,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   /// Layers button: map or satellite, and light / dark / automatic.
   Future<void> _mapLook() async {
     await showModalBottomSheet<void>(
-      context: context,
+      context: _ctx,
       showDragHandle: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, set) {
@@ -1174,12 +1270,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: on ? HsColors.blue : const Color(0xFFDADCE0), width: on ? 2 : 1),
-                        color: on ? HsColors.cardHigh : null,
+                        color: on ? _surface2 : null,
                       ),
                       child: Column(children: [
-                        Icon(icon, color: on ? HsColors.blue : HsColors.charcoal),
+                        Icon(icon, color: on ? HsColors.blue : _ink),
                         const SizedBox(height: 6),
-                        Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: on ? HsColors.blue : HsColors.charcoal)),
+                        Text(label, style: TextStyle(fontWeight: FontWeight.w600, color: on ? HsColors.blue : _ink)),
                       ]),
                     ),
                   ),
@@ -1409,7 +1505,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
           icon: icon,
           anchor: Offset(0.5, isNext ? 0.25 : 0.5),
           consumeTapEvents: true,
-          onTap: () => showStopSheet(context, s, n),
+          onTap: () => showStopSheet(_ctx, s, n),
         ));
       }
       _gMarks = marks;
@@ -1620,7 +1716,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
               height: identical(s, next) ? 74 : 40,
               alignment: Alignment.center,
               child: GestureDetector(
-                onTap: () => showStopSheet(context, s, plan.stops.indexOf(s) + 1),
+                onTap: () => showStopSheet(_ctx, s, plan.stops.indexOf(s) + 1),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   SizedBox(
                     width: identical(s, next) ? 40 : 30,
@@ -1835,7 +1931,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       },
       child: Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: _surface,
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 14)],
         ),
@@ -1859,12 +1955,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                 Row(children: [
                   // exit, like Google's X
                   Material(
-                    shape: const CircleBorder(side: BorderSide(color: Color(0xFF5F6368), width: 1.5)),
-                    color: Colors.white,
+                    shape: CircleBorder(side: BorderSide(color: _ink2, width: 1.5)),
+                    color: _surface,
                     child: InkWell(
                       customBorder: const CircleBorder(),
                       onTap: () => Navigator.of(context).pop(),
-                      child: const SizedBox(width: 56, height: 56, child: Icon(Icons.close, size: 30, color: HsColors.charcoal)),
+                      child: SizedBox(width: 56, height: 56, child: Icon(Icons.close, size: 30, color: _ink)),
                     ),
                   ),
                   Expanded(
@@ -1882,7 +1978,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                                     style: TextStyle(fontSize: 30, fontWeight: FontWeight.w600, color: _timeColor(), height: 1.1)),
                                 Text(
                                   to == null ? 'Finding the route…' : '${_dist(to.$1)}  •  ${DateFormat.jm().format(eta!)}',
-                                  style: const TextStyle(color: Color(0xFF5F6368), fontSize: 17),
+                                  style: TextStyle(color: _ink2, fontSize: 17),
                                 ),
                                 Text(
                                     _detour != null
@@ -1890,14 +1986,14 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                                         : 'Stop ${plan.stops.indexOf(next) + 1} · ${next.name}',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(color: HsColors.navy, fontSize: 13, fontWeight: FontWeight.w600)),
+                                    style: TextStyle(color: _dark ? const Color(0xFF8AB4F8) : HsColors.navy, fontSize: 13, fontWeight: FontWeight.w600)),
                               ]),
                       ),
                     ),
                   ),
                   Material(
-                    shape: const CircleBorder(side: BorderSide(color: Color(0xFF5F6368), width: 1.5)),
-                    color: Colors.white,
+                    shape: CircleBorder(side: BorderSide(color: _ink2, width: 1.5)),
+                    color: _surface,
                     child: InkWell(
                       customBorder: const CircleBorder(),
                       onTap: toggle,
@@ -1925,7 +2021,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                           value: plan.stops.isEmpty ? 0 : done / plan.stops.length,
                           minHeight: 8,
                           color: HsColors.onDuty,
-                          backgroundColor: HsColors.cardHigh,
+                          backgroundColor: _surface2,
                         ),
                       ),
                     ),
@@ -1946,7 +2042,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                         return InkWell(
                           borderRadius: BorderRadius.circular(14),
                           onTap: () {
-                            showStopSheet(context, s, i + 1);
+                            showStopSheet(_ctx, s, i + 1);
                             if (s.hasLocation && _mapReady) {
                               setState(() => _follow = false);
                               _camTo(LatLng(s.lat!, s.lon!), 16);
@@ -1956,7 +2052,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
                             width: 132,
                             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                             decoration: BoxDecoration(
-                              color: isNext ? HsColors.cardHigh : HsColors.card,
+                              color: isNext ? _surface2 : (_dark ? const Color(0xFF292B2F) : HsColors.card),
                               borderRadius: BorderRadius.circular(14),
                               border: Border.all(color: isNext ? HsColors.blue : Colors.transparent, width: 1.5),
                             ),
@@ -2033,7 +2129,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
         if (_stepAt[i] > _userAt || r.steps[i].type == 'arrive') i,
     ];
     showModalBottomSheet<void>(
-      context: context,
+      context: _ctx,
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) => DraggableScrollableSheet(
