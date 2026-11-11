@@ -15,6 +15,7 @@ import 'app_theme.dart';
 import 'erp_service.dart';
 import 'map_tiles.dart';
 import 'nav_icons.dart';
+import 'nav_notify.dart';
 import 'pip.dart';
 import 'preferences.dart';
 import 'stop_actions.dart';
@@ -64,6 +65,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   List<RoutePlan> _alts = const []; // other ways to the same stop, shown in grey with how much slower they are
   List<LatLng?> _altLabelAt = const [];
   Timer? _refresh; // fresh traffic times and alternatives every few minutes
+  Timer? _notifyTimer; // the navigation card in the notification bar
   bool _skipping = false;
   List<double> _cum = const []; // distance along the route to each line point
   List<int> _stepAt = const []; // line point of each step
@@ -113,6 +115,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     Pip.init();
     Pip.enable(true); // leaving the app during a trip shows it in a floating window
     Pip.active.addListener(_onPip);
+    // the navigation card in the notification bar, kept up to date; its "Exit navigation" ends the trip screen
+    NavNotify.init();
+    NavNotify.onExit = () {
+      if (mounted) Navigator.of(context).pop();
+    };
+    _notifyTimer = Timer.periodic(const Duration(seconds: 3), (_) => _notify());
     try {
       _theme = Preferences.instance.getString(Preferences.tripMapTheme) ?? 'auto';
     } catch (_) {}
@@ -125,12 +133,33 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     });
   }
 
+  void _notify() {
+    final step = _nextStep();
+    final to = _toNext();
+    if (step == null || to == null || _cum.isEmpty) {
+      if (_remaining().isEmpty) NavNotify.hide();
+      return;
+    }
+    final eta = DateFormat.jm().format(DateTime.now().add(Duration(seconds: to.$2.round())));
+    final what = step.$1.type == 'arrive' ? '${_destName() ?? 'Your stop'} ahead' : _stepText(step.$1);
+    final total = _cum.last;
+    NavNotify.show(
+      icon: _icon(step.$1),
+      title: '${step.$2 < 15 ? 'Now' : _dist(step.$2)} · $what',
+      text: 'Arrive $eta',
+      progress: total <= 0 ? 0 : _cum[math.min(_userAt, _cum.length - 1)] / total,
+    );
+  }
+
   void _onPip() {
     if (mounted) setState(() => _gKey = '');
   }
 
   @override
   void dispose() {
+    _notifyTimer?.cancel();
+    NavNotify.onExit = null;
+    NavNotify.hide();
     Pip.enable(false);
     Pip.active.removeListener(_onPip);
     _gps?.cancel();
@@ -1458,7 +1487,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       }
       // the next turn, labelled on the map like Google
       final nx = _nextStep();
-      if (nx != null && nx.$1.type != 'arrive' && nx.$1.type != 'depart') {
+      if (nx != null && nx.$1.type != 'arrive' && nx.$1.type != 'depart' && nx.$2 > 120) {
         final t = _stepText(nx.$1);
         final parts = _roadParts(t);
         final first = parts?.$2.split(' / ').first; // the map label keeps to the first road name
@@ -1470,7 +1499,7 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
             markerId: const gm.MarkerId('turn'),
             position: gm.LatLng(nx.$1.lat, nx.$1.lon),
             icon: icon,
-            anchor: const Offset(0.02, 0.9),
+            anchor: const Offset(0.05, 1.45), // above the turn, so the road and the turn stay visible
           ));
         }
       }

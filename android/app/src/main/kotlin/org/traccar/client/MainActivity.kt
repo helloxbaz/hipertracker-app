@@ -1,6 +1,7 @@
 package org.traccar.client
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.util.Rational
@@ -12,6 +13,21 @@ class MainActivity : FlutterActivity() {
     // the trip screen asks for a floating window (picture-in-picture) when the app is left
     private var pipWanted = false
     private var pipChannel: MethodChannel? = null
+    private var navChannel: MethodChannel? = null
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // "Exit navigation" on the notification
+        if (intent.action == NavNotification.ACTION_EXIT) {
+            NavNotification.hide(applicationContext)
+            navChannel?.invokeMethod("exit", null)
+        }
+    }
+
+    override fun onDestroy() {
+        NavNotification.hide(applicationContext)
+        super.onDestroy()
+    }
 
     private fun pipParams(): PictureInPictureParams? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
@@ -85,6 +101,28 @@ class MainActivity : FlutterActivity() {
                         result.success(null)
                     }
                     "enter" -> result.success(enterPip())
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        navChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.traccar.client/nav").also {
+            it.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "show" -> {
+                        NavNotification.show(
+                            applicationContext,
+                            call.argument<String>("title") ?: "",
+                            call.argument<String>("text") ?: "",
+                            call.argument<ByteArray>("icon"),
+                            call.argument<Int>("progress") ?: 0,
+                            (call.argument<Number>("color") ?: 0xFF1A73E8).toInt(),
+                        )
+                        result.success(null)
+                    }
+                    "hide" -> {
+                        NavNotification.hide(applicationContext)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
