@@ -798,8 +798,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
     final m = RegExp(r'\b(onto|on|toward|towards|to stay on|into)\s+(.+)$', caseSensitive: false).firstMatch(text);
     if (m == null) return null;
     final prep = m.group(1)!.toLowerCase();
-    // "Chalappuram Rd/Madhavan Nair Rd": Google's banner shows the first name
-    final road = m.group(2)!.split('/').first.trim();
+    // "Chalappuram Rd/Madhavan Nair Rd" shown "Chalappuram Rd / Madhavan Nair Rd", like Google's banner
+    final road = m.group(2)!.split('/').map((x) => x.trim()).where((x) => x.isNotEmpty).join(' / ');
     return (prep == 'towards' ? 'toward' : (prep == 'onto' || prep == 'on' || prep == 'into' ? '' : prep), road);
   }
 
@@ -1316,7 +1316,8 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       if (nx != null && nx.$1.type != 'arrive' && nx.$1.type != 'depart') {
         final t = _stepText(nx.$1);
         final parts = _roadParts(t);
-        final text = parts == null ? t : '${parts.$1.isEmpty ? '' : '${parts.$1} '}${parts.$2}';
+        final first = parts?.$2.split(' / ').first; // the map label keeps to the first road name
+        final text = parts == null ? t : '${parts.$1.isEmpty ? '' : '${parts.$1} '}$first';
         final ic = _icon(nx.$1);
         final icon = NavIcons.get('callout-${ic.codePoint}-$text', dpr, (d) => NavIcons.callout(d, ic, text), redraw);
         if (icon != null) {
