@@ -1179,50 +1179,43 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   /// The small floating window (picture-in-picture) while the driver is in another app:
   /// the map with the next turn on top, like Google Maps.
   List<Widget> _pipOverlay(TripPlan plan) {
+    // like Google Maps' floating window: the map, and the next turn with the arrival time at the bottom
     final step = _nextStep();
     final to = _toNext();
     final text = step == null ? '' : _stepText(step.$1);
-    final road = step == null || step.$1.type == 'arrive' ? null : _road(text)?.split(' / ').first;
+    final parts = step == null || step.$1.type == 'arrive' ? null : _roadParts(text);
+    final line = parts == null
+        ? (step == null ? 'HiperTracker' : text)
+        : '${parts.$1.isEmpty ? '' : '${parts.$1} '}${parts.$2.split(' / ').first}';
+    final eta = to == null ? null : DateFormat.jm().format(DateTime.now().add(Duration(seconds: to.$2.round())));
     return [
       Positioned(
         left: 0,
         right: 0,
-        top: 0,
+        bottom: 0,
         child: Container(
+          height: _pipBar,
           color: _navGreen,
-          padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(children: [
-            Icon(step == null ? Icons.navigation : _icon(step.$1), color: Colors.white, size: 28),
+            Icon(step == null ? Icons.navigation : _icon(step.$1), color: Colors.white, size: 22),
             const SizedBox(width: 6),
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                if (step != null)
-                  Text(step.$2 < 15 ? 'Now' : _dist(step.$2),
-                      style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600, height: 1.1)),
-                Text(road ?? (step == null ? 'HiperTracker' : text),
-                    maxLines: 2,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, children: [
+                Text(line,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700, height: 1.15)),
+                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600, height: 1.15)),
+                if (eta != null)
+                  Text(eta, style: const TextStyle(color: Color(0xFFCFE3E1), fontSize: 11, height: 1.2)),
               ]),
             ),
           ]),
         ),
       ),
-      if (to != null)
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: Container(
-            color: _surface,
-            padding: const EdgeInsets.symmetric(vertical: 3),
-            child: Text('${_mins(to.$2)} · ${_dist(to.$1)}',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _timeColor(), fontSize: 12, fontWeight: FontWeight.w700)),
-          ),
-        ),
     ];
   }
+
 
   /// The way to the next stop and its alternatives, all on screen.
   void _fitRoute() {
@@ -1316,7 +1309,10 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
   }
 
   /// Top / bottom map padding: following, the camera centre (where the arrow is) sits low on the screen.
+  static const _pipBar = 48.0;
+
   (double, double) _gPad() {
+    if (Pip.active.value) return (_screenH * 0.42, _pipBar); // floating window: arrow low, above the turn bar
     final bottom = 120 + MediaQuery.of(context).padding.bottom;
     final top = _follow && _headingUp ? _screenH * 0.5 : 170.0;
     return (top, bottom);
@@ -1585,7 +1581,12 @@ class _TripScreenState extends State<TripScreen> with SingleTickerProviderStateM
       right: 0,
       top: y - 36,
       child: IgnorePointer(
-        child: Center(child: NavArrow(turn: turn, tilt: _headingUp ? 0.75 : 0, moving: _moving)),
+        child: Center(
+          child: Transform.scale(
+            scale: Pip.active.value ? 0.5 : 1, // smaller in the floating window
+            child: NavArrow(turn: turn, tilt: _headingUp ? 0.75 : 0, moving: _moving),
+          ),
+        ),
       ),
     );
   }
