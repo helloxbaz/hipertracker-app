@@ -26,7 +26,7 @@ object CurrentLocation {
 
     private const val TIMEOUT_MS = 30000L
     private const val GOOD_M = 25f
-    private const val OK_M = 60f
+    private const val OK_M = 50f // never rougher than 50 m (the ERP checks its own limit too)
 
     @SuppressLint("MissingPermission")
     fun get(context: Context, result: MethodChannel.Result) {

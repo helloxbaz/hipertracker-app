@@ -6,7 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'geolocation_service.dart';
 import 'preferences.dart';
 
-/// Below 20% and not charging, tracking switches to Wi-Fi / mobile towers only and reports less often,
+/// Below 20% and not charging, tracking switches to balanced (Wi-Fi + GPS when needed) and reports less often,
 /// so the phone lasts the day. Back to the normal mode once charging or above 30%.
 /// (The ERP can turn this off: HiperTracker Settings > Save Battery When Low.)
 class BatterySaver with WidgetsBindingObserver {

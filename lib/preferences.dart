@@ -113,7 +113,7 @@ class Preferences {
   }
 
   static Config buildConfig() {
-    // battery low: Wi-Fi / mobile towers only, fewer reports (see BatterySaver)
+    // battery low: fewer reports (see BatterySaver)
     final saving = instance.getBool(batterySaving) ?? false;
     final baseInterval = instance.getInt(interval) ?? 300;
     final baseDistance = instance.getInt(distance) ?? 75;
@@ -121,7 +121,8 @@ class Preferences {
       serverUrl: instance.getString(url) ?? '',
       deviceId: instance.getString(id) ?? '',
       location: LocationConfig(
-        accuracy: saving ? Accuracy.low : switch (instance.getString(accuracy)) {
+        // battery low: balanced (Wi-Fi + GPS when needed), never towers only: places must stay within 50 m
+        accuracy: saving ? Accuracy.medium : switch (instance.getString(accuracy)) {
           'highest' => Accuracy.highest,
           'high' => Accuracy.high,
           'low' => Accuracy.low,
