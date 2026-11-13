@@ -105,6 +105,20 @@ class MainActivity : FlutterActivity() {
                 }
             }
         }
+        // battery level for saving mode
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.traccar.client/battery").setMethodCallHandler { call, result ->
+            if (call.method == "level") {
+                val bm = getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+                result.success(
+                    mapOf(
+                        "level" to bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY),
+                        "charging" to bm.isCharging,
+                    )
+                )
+            } else {
+                result.notImplemented()
+            }
+        }
         navChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "org.traccar.client/nav").also {
             it.setMethodCallHandler { call, result ->
                 when (call.method) {

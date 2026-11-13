@@ -14,6 +14,7 @@ import 'package:traccar_client/update_service.dart';
 import 'app_theme.dart';
 import 'configuration_service.dart';
 import 'erp_service.dart';
+import 'battery_saver.dart';
 import 'geolocation_service.dart';
 import 'home_shell.dart';
 import 'l10n/app_localizations.dart';
@@ -52,6 +53,7 @@ void main() async {
   await PasswordService.migrate();
   await PushService.init();
   await ManagedConfigService.init();
+  BatterySaver.start();
   runApp(const MainApp());
 }
 

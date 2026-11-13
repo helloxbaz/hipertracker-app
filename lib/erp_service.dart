@@ -191,7 +191,10 @@ class ErpService {
     if (identifier.isNotEmpty) await p.setString(Preferences.id, identifier);
     final reportUrl = '${config['report_url'] ?? ''}';
     if (reportUrl.isNotEmpty) await p.setString(Preferences.url, Preferences.normalizeServerUrl(reportUrl));
-    await p.setString(Preferences.accuracy, 'high');
+    // Balanced (Wi-Fi / towers, GPS when needed) or Precise (GPS), set in the ERP; check-in is always GPS
+    final acc = '${config['accuracy'] ?? 'high'}';
+    await p.setString(Preferences.accuracy, const {'high', 'medium', 'low', 'highest'}.contains(acc) ? acc : 'high');
+    await p.setBool(Preferences.lowBatterySaver, _int(config['low_battery_saver'], 1) == 1);
     await p.setInt(Preferences.interval, _int(config['interval'], 60));
     await p.setInt(Preferences.distance, _int(config['distance'], 50));
     await p.setInt(Preferences.heartbeat, 300);

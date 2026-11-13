@@ -44,6 +44,8 @@ class LocationGuardService {
       switch (e.code) {
         case 'permission':
           throw const LocationFixException('Allow HiperTracker to use your location (Allow all the time), then try again.');
+        case 'inaccurate':
+          throw LocationFixException(e.message ?? 'Could not get an accurate location. Go outside or near a window and try again.');
         case 'gps_off':
           throw const LocationFixException('Your location (GPS) is switched off. Turn it on and try again.');
         default:
