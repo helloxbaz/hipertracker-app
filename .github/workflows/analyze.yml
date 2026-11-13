@@ -12,6 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.9 # pinned: 3.50 deprecates package:flutter/material.dart
       - run: flutter pub get
       - name: flutter analyze
         run: |

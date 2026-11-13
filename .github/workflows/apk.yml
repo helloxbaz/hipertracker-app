@@ -39,6 +39,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.47.9 # pinned: 3.50 deprecates package:flutter/material.dart
           cache: true
 
       - name: Signing key
