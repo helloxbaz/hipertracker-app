@@ -277,6 +277,16 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
     );
   }
 
+  /// The track split where the phone sent nothing for a while.
+  List<List<LatLng>> _parts(List<List<double>> track) {
+    final parts = <List<LatLng>>[[]];
+    for (final p in track) {
+      if (p.length > 2 && p[2] == 1 && parts.last.isNotEmpty) parts.add([]);
+      parts.last.add(LatLng(p[0], p[1]));
+    }
+    return parts;
+  }
+
   Widget _map(TripPlan t) {
     final stops = t.stops.where((s) => s.hasLocation).toList();
     final pts = [for (final s in stops) LatLng(s.lat!, s.lon!)];
@@ -303,7 +313,18 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
           ]),
         if (track.length > 1)
           PolylineLayer(polylines: [
-            Polyline(points: track, strokeWidth: 5, color: HsColors.onDuty, borderStrokeWidth: 1.5, borderColor: Colors.white),
+            // the route in pieces; where the phone sent nothing for a while, a thin grey dotted line
+            for (final part in _parts(t.track))
+              if (part.length > 1)
+                Polyline(points: part, strokeWidth: 5, color: HsColors.onDuty, borderStrokeWidth: 1.5, borderColor: Colors.white),
+            for (var k = 1; k < t.track.length; k++)
+              if (t.track[k].length > 2 && t.track[k][2] == 1)
+                Polyline(
+                  points: [LatLng(t.track[k - 1][0], t.track[k - 1][1]), LatLng(t.track[k][0], t.track[k][1])],
+                  strokeWidth: 2,
+                  color: const Color(0xFF9CA3AF),
+                  pattern: StrokePattern.dotted(),
+                ),
           ]),
         MarkerLayer(markers: [
           for (final s in stops)

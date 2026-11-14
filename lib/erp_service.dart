@@ -605,7 +605,8 @@ class TripPlan {
       progress: str(p['progress']),
       track: [
         for (final t in (p['track'] as List? ?? const []))
-          if (t is List && t.length >= 2) [n(t[0]), n(t[1])],
+          // a third value of 1: the phone sent nothing just before this point (no road to draw to it)
+          if (t is List && t.length >= 2) [n(t[0]), n(t[1]), if (t.length > 2) n(t[2])],
       ],
     );
   }
