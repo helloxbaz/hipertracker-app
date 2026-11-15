@@ -173,6 +173,19 @@ class _LiveTabState extends State<_LiveTab> with AutomaticKeepAliveClientMixin {
             options: const MapOptions(initialCenter: LatLng(10.55, 76.3), initialZoom: 8),
             children: [
               hsTiles(),
+              // no GPS: a ring of how far off it may be (Wi-Fi / mobile tower)
+              CircleLayer(circles: [
+                for (final d in list)
+                  if (d['approx'] != null && d['lat'] != null && d['lon'] != null)
+                    CircleMarker(
+                      point: LatLng(_d(d['lat']), _d(d['lon'])),
+                      radius: _d(d['accuracy']),
+                      useRadiusInMeter: true,
+                      color: const Color(0x22B26A00),
+                      borderColor: HsColors.warning,
+                      borderStrokeWidth: 1.5,
+                    ),
+              ]),
               MarkerLayer(markers: [
                 for (final d in list)
                   if (d['lat'] != null && d['lon'] != null)
@@ -233,6 +246,7 @@ class _LiveTabState extends State<_LiveTab> with AutomaticKeepAliveClientMixin {
               _statusLabel[d['status']] ?? '${d['status']}',
               _ago(d['age_minutes']),
               if (d['place'] is Map) 'at ${d['place']['name']}',
+              if (d['approx'] != null) 'approx. (${d['approx']})',
               if (_d(d['speed']) > 3) '${_d(d['speed']).round()} km/h',
               if (d['battery'] != null) '${_d(d['battery']).round()}% battery',
             ].join(' · ')),
