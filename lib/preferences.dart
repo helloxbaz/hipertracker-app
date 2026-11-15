@@ -45,6 +45,7 @@ class Preferences {
   static const String tripMapTheme = 'trip_map_theme'; // auto / light / dark
   static const String lowBatterySaver = 'low_battery_saver'; // ERP allows switching to saving when low
   static const String batterySaving = 'battery_saving'; // saving now (battery low)
+  static const String isManager = 'is_manager'; // sees the team (from the ERP)
 
   static Future<void> init() async {
     _initFuture ??= _createInstance();
@@ -60,7 +61,7 @@ class Preferences {
         allowList: {
           id, url, accuracy, distance, interval, angle, heartbeat, buffer, wakelock, stopDetection, preferPlatformProviders, password,
           erpUrl, erpUser, erpSid, erpEmployee, erpEmployeeName, onDuty, dutySince, dutyMode, alarmInterval, escalateAfter,
-          requireLocation, trackingOnly, tripVoice, tripVoiceName, tripVoiceLocale, tripVoiceRate, tripMapTheme, lowBatterySaver, batterySaving,
+          requireLocation, trackingOnly, tripVoice, tripVoiceName, tripVoiceLocale, tripVoiceRate, tripMapTheme, lowBatterySaver, batterySaving, isManager,
         },
       ),
     );

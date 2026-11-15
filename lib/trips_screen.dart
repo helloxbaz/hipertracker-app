@@ -381,8 +381,15 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         ]),
         const SizedBox(height: 14),
         Row(children: [
-          stat(t.fuelLitres > 0 ? '${t.fuelLitres.toStringAsFixed(1)} L' : '–', 'Petrol needed'),
-          stat(t.fuelCost > 0 ? hsMoney(t.fuelCost) : '–', 'Petrol cost'),
+          // driven: petrol for the km actually travelled (what a claim pays); not started yet: the plan's estimate
+          if (t.actualKm > 0 && t.mileage > 0) ...[
+            stat('${(t.actualKm / t.mileage).toStringAsFixed(1)} L', 'Petrol used'),
+            stat(hsMoney((t.actualKm / t.mileage * (t.fuelPrice > 0 ? t.fuelPrice : t.fuelCost / (t.fuelLitres > 0 ? t.fuelLitres : 1))).roundToDouble()),
+                'Petrol cost'),
+          ] else ...[
+            stat(t.fuelLitres > 0 ? '${t.fuelLitres.toStringAsFixed(1)} L' : '–', 'Petrol (planned)'),
+            stat(t.fuelCost > 0 ? hsMoney(t.fuelCost) : '–', 'Cost (planned)'),
+          ],
           stat(t.mileage > 0 ? '${t.mileage.toStringAsFixed(t.mileage % 1 == 0 ? 0 : 1)} km/l' : 'Not set', 'Mileage'),
         ]),
         if (t.started != null) ...[

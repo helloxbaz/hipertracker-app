@@ -10,6 +10,7 @@ import 'password_service.dart';
 import 'preferences.dart';
 import 'settings_screen.dart';
 import 'status_screen.dart';
+import 'team_screen.dart';
 import 'update_service.dart';
 import 'voice_screen.dart';
 
@@ -101,6 +102,13 @@ class _MoreScreenState extends State<MoreScreen> {
           ]),
         ),
         const SizedBox(height: 16),
+        if (connected && (Preferences.instance.getBool(Preferences.isManager) ?? false))
+          HsTile(
+            icon: Icons.groups_2_outlined,
+            title: 'My team',
+            subtitle: 'Live map, routes, trips, alerts and approvals',
+            onTap: () => _open(const TeamScreen()),
+          ),
         if (connected)
           HsTile(
             icon: Icons.event_busy,

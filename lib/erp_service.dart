@@ -195,6 +195,7 @@ class ErpService {
     final acc = '${config['accuracy'] ?? 'high'}';
     await p.setString(Preferences.accuracy, const {'high', 'medium', 'low', 'highest'}.contains(acc) ? acc : 'high');
     await p.setBool(Preferences.lowBatterySaver, _int(config['low_battery_saver'], 1) == 1);
+    await p.setBool(Preferences.isManager, _int(config['is_manager'], 0) == 1);
     await p.setInt(Preferences.interval, _int(config['interval'], 60));
     await p.setInt(Preferences.distance, _int(config['distance'], 50));
     await p.setInt(Preferences.heartbeat, 300);
@@ -302,6 +303,33 @@ class ErpService {
   }
 
   /// Changes the stops still to visit of one of my trips (stops already reached stay); recalculates km and fuel.
+  // ---- managers: the team ----
+  static Future<Map<String, dynamic>> teamLive() async =>
+      (await _call('hipertracker_live', const {}) as Map<String, dynamic>?) ?? const {};
+  static Future<Map<String, dynamic>> teamDay(String device, DateTime day) async =>
+      (await _call('hipertracker_history', {'device': device, 'date': _ymd(day)}) as Map<String, dynamic>?) ?? const {};
+  static Future<Map<String, dynamic>> teamAlerts() async =>
+      (await _call('hipertracker_team_alerts', const {'days': '3'}) as Map<String, dynamic>?) ?? const {};
+  static Future<void> teamAlertsRead() async => _call('hipertracker_team_alerts_read', const {});
+  static Future<List> teamRequests() async => (await _call('hipertracker_team_requests', const {}) as List?) ?? const [];
+  static Future<Map<String, dynamic>> teamDecide(String doctype, String name, bool approve, {String? reason}) async =>
+      (await _call('hipertracker_team_decide', {
+        'doctype': doctype,
+        'name': name,
+        'action': approve ? 'approve' : 'reject',
+        if (reason != null && reason.isNotEmpty) 'reason': reason,
+      }) as Map<String, dynamic>?) ??
+      const {};
+  static Future<List> teamTrips(DateTime day) async =>
+      (await _call('hipertracker_team_trips', {'date': _ymd(day)}) as List?) ?? const [];
+  static Future<Map<String, dynamic>> teamTrip(String plan) async =>
+      (await _call('hipertracker_trip_plan', {'plan': plan}) as Map<String, dynamic>?) ?? const {};
+  static Future<Map<String, dynamic>> teamAttendance() async =>
+      (await _call('hipertracker_attendance_today', const {}) as Map<String, dynamic>?) ?? const {};
+
+  static String _ymd(DateTime d) =>
+      '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   /// Petrol pumps along [points] (the way ahead, from where I am), nearest first.
   static Future<List<FuelStation>> fuelStations(List<List<double>> points) async {
     final pts = points.map((p) => '${p[0].toStringAsFixed(5)},${p[1].toStringAsFixed(5)}').join(';');
