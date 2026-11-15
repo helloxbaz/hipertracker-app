@@ -361,9 +361,12 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
       icon: const Icon(Icons.local_gas_station),
       label: Text(f.amount <= 0
           ? 'No vehicle mileage yet – ask the office'
-          : 'Claim petrol ${hsMoney(f.amount)} (${f.km.toStringAsFixed(1)} km ${f.actual ? 'travelled' : 'planned'})'),
+          : 'Claim petrol ${hsMoney(f.amount)} (${f.km.toStringAsFixed(1)} km ${f.actual ? 'road driven' : 'planned'})'),
     );
   }
+
+  /// Road km driven (what the claim pays) once known, else the phone's travelled km.
+  double _driven(TripPlan t) => _fuel?.actual == true ? _fuel!.km : t.actualKm;
 
   Widget _totals(TripPlan t) {
     Widget stat(String value, String label, {Color color = HsColors.navy}) => Expanded(
@@ -377,14 +380,19 @@ class _TripDetailScreenState extends State<TripDetailScreen> {
         Row(children: [
           stat(hsKm(t.plannedKm), 'Planned distance'),
           stat(t.plannedMinutes > 0 ? hsDuration(t.plannedMinutes) : '–', 'Driving time'),
-          stat(t.actualKm > 0 ? hsKm(t.actualKm) : '–', 'Travelled', color: HsColors.onDuty),
+          stat(_driven(t) > 0 ? hsKm(_driven(t)) : '–', _fuel?.actual == true ? 'Road km driven' : 'Travelled',
+              color: HsColors.onDuty),
         ]),
         const SizedBox(height: 14),
         Row(children: [
           // driven: petrol for the km actually travelled (what a claim pays); not started yet: the plan's estimate
-          if (t.actualKm > 0 && t.mileage > 0) ...[
-            stat('${(t.actualKm / t.mileage).toStringAsFixed(1)} L', 'Petrol used'),
-            stat(hsMoney((t.actualKm / t.mileage * (t.fuelPrice > 0 ? t.fuelPrice : t.fuelCost / (t.fuelLitres > 0 ? t.fuelLitres : 1))).roundToDouble()),
+          if (_driven(t) > 0 && t.mileage > 0) ...[
+            stat('${(_driven(t) / t.mileage).toStringAsFixed(1)} L', 'Petrol used'),
+            stat(
+                _fuel?.actual == true
+                    ? hsMoney(_fuel!.amount)
+                    : hsMoney((_driven(t) / t.mileage * (t.fuelPrice > 0 ? t.fuelPrice : t.fuelCost / (t.fuelLitres > 0 ? t.fuelLitres : 1)))
+                        .roundToDouble()),
                 'Petrol cost'),
           ] else ...[
             stat(t.fuelLitres > 0 ? '${t.fuelLitres.toStringAsFixed(1)} L' : '–', 'Petrol (planned)'),

@@ -209,6 +209,7 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
   ExpenseInfo? _info;
   String? _error;
   final Set<String> _trips = {};
+  final Set<String> _back = {}; // trips claimed with the drive back to the start
   final List<_Other> _others = [];
   final _remark = TextEditingController();
   bool _saving = false;
@@ -253,7 +254,9 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
   double get _total {
     final info = _info;
     if (info == null) return 0;
-    final trips = info.trips.where((t) => _trips.contains(t.name)).fold(0.0, (a, t) => a + t.amount);
+    final trips = info.trips
+        .where((t) => _trips.contains(t.name))
+        .fold(0.0, (a, t) => a + (_back.contains(t.name) && t.hasReturn ? t.amountReturn : t.amount));
     return trips + _others.fold(0.0, (a, o) => a + o.amount);
   }
 
@@ -343,7 +346,7 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
     String d(DateTime x) => '${x.year}-${x.month.toString().padLeft(2, '0')}-${x.day.toString().padLeft(2, '0')}';
     try {
       final name = await ErpService.claimExpense([
-        for (final t in _trips) {'trip': t},
+        for (final t in _trips) {'trip': t, if (_back.contains(t)) 'return': 1},
         for (final o in _others) {'type': o.type, 'date': d(o.date), 'amount': o.amount, 'description': o.note},
       ], remark: _remark.text.trim(), claim: widget.existing?.name);
       messenger.showSnackBar(SnackBar(
@@ -429,7 +432,8 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: HsColors.navy)),
               const Padding(
                 padding: EdgeInsets.only(top: 2, bottom: 8),
-                child: Text('Worked out from the trip km, your vehicle mileage and the petrol price.',
+                child: Text('Worked out from the road km actually driven (the phone\'s route on the roads), '
+                    'your vehicle mileage and the petrol price.',
                     style: TextStyle(color: HsColors.textSecondary, fontSize: 13)),
               ),
               if (info.fuelType == null)
@@ -455,14 +459,30 @@ class _NewClaimScreenState extends State<NewClaimScreen> {
                               ? 'Already claimed in ${t.claimedIn}'
                               : t.amount <= 0
                                   ? 'Set your vehicle mileage to work out the petrol'
-                                  : '${_date(t.date)} · ${t.km.toStringAsFixed(1)} km ${t.actual ? 'travelled' : 'planned'} · '
+                                  : '${_date(t.date)} · ${t.km.toStringAsFixed(1)} km ${t.actual ? 'road driven' : 'planned'} · '
                                       '${t.litres.toStringAsFixed(2)} L',
                           style: TextStyle(color: _free(t) ? null : HsColors.textSecondary),
                         ),
-                        secondary: Text(t.amount > 0 ? hsMoney(t.amount) : '–',
+                        secondary: Text(
+                            t.amount > 0 ? hsMoney(_back.contains(t.name) && t.hasReturn ? t.amountReturn : t.amount) : '–',
                             style: const TextStyle(fontWeight: FontWeight.w800, color: HsColors.navy)),
                         controlAffinity: ListTileControlAffinity.leading,
                       ),
+                    ),
+                  ),
+              // the drive back: claimed only when the person chooses it for that trip
+              if (info.fuelType != null)
+                for (final t in trips.where((t) => _trips.contains(t.name) && t.hasReturn))
+                  Padding(
+                    padding: const EdgeInsets.only(left: 12, bottom: 8),
+                    child: SwitchListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      value: _back.contains(t.name),
+                      onChanged: (v) => setState(() => v ? _back.add(t.name) : _back.remove(t.name)),
+                      title: Text('Include the drive back · ${t.title}', maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text('${t.kmReturn.toStringAsFixed(1)} km instead of ${t.km.toStringAsFixed(1)} km · '
+                          '${hsMoney(t.amountReturn)}'),
                     ),
                   ),
               const SizedBox(height: 18),

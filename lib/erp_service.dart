@@ -993,8 +993,13 @@ class TripFuel {
   final double litres;
   final double amount;
   final String? claimedIn;
+  final double kmReturn; // road km driven incl. the drive back to the start (0 = not known)
+  final double amountReturn;
   const TripFuel(this.name, this.title, this.date, this.status, this.km, this.actual, this.mileage, this.price, this.litres,
-      this.amount, this.claimedIn);
+      this.amount, this.claimedIn, {this.kmReturn = 0, this.amountReturn = 0});
+
+  /// The drive back adds km (worth offering "include the drive back").
+  bool get hasReturn => actual && kmReturn > km + 0.2;
 }
 
 class ExpenseInfo {
@@ -1018,7 +1023,8 @@ class ExpenseInfo {
         [
           for (final t in (j['trips'] as List? ?? const []))
             TripFuel('${t['name']}', '${t['title'] ?? t['name']}', '${t['date']}', '${t['status'] ?? ''}', _d(t['km']),
-                t['actual'] == 1, _d(t['mileage']), _d(t['price']), _d(t['litres']), _d(t['amount']), _s(t['claimed_in'])),
+                t['actual'] == 1, _d(t['mileage']), _d(t['price']), _d(t['litres']), _d(t['amount']), _s(t['claimed_in']),
+                kmReturn: _d(t['km_return']), amountReturn: _d(t['amount_return'])),
         ],
       );
 }
